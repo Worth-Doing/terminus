@@ -1,0 +1,1000 @@
+import SwiftUI
+import SharedModels
+import SharedUI
+import DataStore
+import SecureStorage
+import TerminalCore
+import TerminalEmulator
+import TerminalUI
+import WorkspaceEngine
+import HistoryEngine
+import PredictionEngine
+import SavedCommands
+import AIService
+import EmbeddingPipeline
+import OnboardingUI
+import SettingsUI
+import SystemMonitor
+
+// MARK: - App State
+
+@MainActor
+@Observable
+final class AppState {
+    var hasCompletedOnboarding: Bool
+    var theme: TerminusTheme = .defaultDark
+    var controllers: [SessionID: TerminalSessionController] = [:]
+
+    let windowState = WindowState()
+    var workspaces: [String: WorkspaceState] = [:]
+
+    let secureStorage = SecureStorage()
+    var dataAccess: DataAccess?
+    var historyEngine: HistoryEngine?
+    var predictionEngine: PredictionEngine?
+    var savedCommandsManager: SavedCommandsManager?
+    var aiService: AIServiceClient?
+    var embeddingPipeline: EmbeddingPipeline?
+
+    // UI state
+    var showSidebar: Bool = false
+    var showCommandPalette: Bool = false
+    var showSemanticSearch: Bool = false
+    var showSaveCommandSheet: Bool = false
+    var showMetrics: Bool = false
+    var savedCommands: [SavedCommand] = []
+    var semanticSearchResults: [(String, Float)] = []
+    var semanticSearchQuery: String = ""
+
+    init() {
+        self.hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
+
+        // Initialize database and services
+        do {
+            let da = try DataAccess.createDefault()
+            self.dataAccess = da
+            let he = HistoryEngine(dataAccess: da)
+            self.historyEngine = he
+            self.predictionEngine = PredictionEngine(history: he)
+            self.savedCommandsManager = SavedCommandsManager(dataAccess: da)
+            let ai = AIServiceClient(secureStorage: secureStorage)
+            self.aiService = ai
+            self.embeddingPipeline = EmbeddingPipeline(aiService: ai, dataAccess: da)
+
+            // Load saved commands
+            self.savedCommands = (try? savedCommandsManager?.list()) ?? []
+        } catch {
+            print("Failed to initialize database: \(error)")
+        }
+
+        // Create first workspace
+        let firstTab = windowState.tabs[0]
+        workspaces[firstTab.workspaceID] = WorkspaceState()
+    }
+
+    var activeWorkspace: WorkspaceState {
+        let tab = windowState.activeTab
+        if let ws = workspaces[tab.workspaceID] {
+            return ws
+        }
+        let ws = WorkspaceState()
+        workspaces[tab.workspaceID] = ws
+        return ws
+    }
+
+    func completeOnboarding() {
+        hasCompletedOnboarding = true
+        UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
+    }
+
+    func controllerForSession(_ sessionID: SessionID) -> TerminalSessionController {
+        if let existing = controllers[sessionID] {
+            return existing
+        }
+
+        let session = TerminalSession(
+            id: sessionID,
+            initialDirectory: NSHomeDirectory(),
+            shell: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        )
+
+        let controller = TerminalSessionController(session: session)
+
+        // Wire command completion to history engine
+        controller.onCommandCompleted = { [weak self] command, exitCode, directory in
+            guard let self, let historyEngine = self.historyEngine else { return }
+
+            let projectType = ProjectDetector.detect(directory: directory)
+            let gitBranch = ProjectDetector.detectGitBranch(directory: directory)
+
+            let entry = CommandEntry(
+                command: command,
+                workingDirectory: directory,
+                shell: session.shell,
+                exitCode: exitCode,
+                startedAt: Date(),
+                finishedAt: Date(),
+                sessionID: session.id,
+                hostname: Host.current().localizedName,
+                projectType: projectType,
+                gitBranch: gitBranch
+            )
+
+            // Record to history
+            try? historyEngine.record(entry)
+
+            // Record n-gram if we have a previous command
+            if let prevController = self.controllers[sessionID],
+               let _ = prevController.currentCommand {
+                // N-gram will be recorded on next command
+            }
+        }
+
+        controllers[sessionID] = controller
+        return controller
+    }
+
+    func addTab() {
+        let tab = windowState.addTab()
+        workspaces[tab.workspaceID] = WorkspaceState()
+    }
+
+    func closeCurrentTab() {
+        let index = windowState.activeTabIndex
+        let tab = windowState.tabs[index]
+
+        // Clean up controllers for this workspace
+        if let ws = workspaces[tab.workspaceID] {
+            for sessionID in ws.allSessionIDs {
+                if let controller = controllers[sessionID] {
+                    Task { await controller.stop() }
+                    controllers.removeValue(forKey: sessionID)
+                }
+            }
+            workspaces.removeValue(forKey: tab.workspaceID)
+        }
+
+        windowState.closeTab(at: index)
+    }
+
+    func splitFocused(direction: SplitDirection) {
+        let ws = activeWorkspace
+        let sessionID = ws.splitPanel(ws.focusedPanelID, direction: direction)
+        _ = controllerForSession(sessionID)
+    }
+
+    func closeFocusedPanel() {
+        let ws = activeWorkspace
+        if ws.panelCount > 1 {
+            // Find the session to clean up
+            if let leaf = findLeaf(ws.focusedPanelID, in: ws.root) {
+                let sessionID = leaf.sessionID
+                ws.closePanel(ws.focusedPanelID)
+
+                // Clean up controller if session is no longer referenced
+                let allSessions = ws.allSessionIDs
+                if !allSessions.contains(sessionID) {
+                    if let controller = controllers[sessionID] {
+                        Task { await controller.stop() }
+                        controllers.removeValue(forKey: sessionID)
+                    }
+                }
+            }
+        } else if windowState.tabs.count > 1 {
+            closeCurrentTab()
+        }
+    }
+
+    private func findLeaf(_ id: PanelID, in node: PanelNode) -> PanelLeaf? {
+        switch node {
+        case .leaf(let leaf): leaf.id == id ? leaf : nil
+        case .split(let split):
+            findLeaf(id, in: split.first) ?? findLeaf(id, in: split.second)
+        }
+    }
+
+    // MARK: - Saved Commands
+
+    func reloadSavedCommands() {
+        savedCommands = (try? savedCommandsManager?.list()) ?? []
+    }
+
+    func saveCommand(_ command: SavedCommand) {
+        try? savedCommandsManager?.save(command)
+        reloadSavedCommands()
+    }
+
+    func deleteSavedCommand(_ command: SavedCommand) {
+        try? savedCommandsManager?.delete(id: command.id)
+        reloadSavedCommands()
+    }
+
+    func insertSavedCommand(_ command: SavedCommand) {
+        // Resolve template and send to focused terminal
+        let ws = activeWorkspace
+        let leaves = ws.allLeaves(in: ws.root)
+        guard let focused = leaves.first(where: { $0.id == ws.focusedPanelID }),
+              let controller = controllers[focused.sessionID] else { return }
+
+        let resolved = savedCommandsManager?.resolve(command, parameters: [:]) ?? command.commandTemplate
+        Task {
+            await controller.sendString(resolved)
+        }
+    }
+
+    // MARK: - Command Palette Items
+
+    func buildPaletteItems() -> [CommandPaletteItem] {
+        var items: [CommandPaletteItem] = []
+
+        // Actions
+        items.append(CommandPaletteItem(
+            title: "Split Horizontally", icon: "rectangle.split.1x2", category: .action,
+            action: { [weak self] in self?.splitFocused(direction: .horizontal) }
+        ))
+        items.append(CommandPaletteItem(
+            title: "Split Vertically", icon: "rectangle.split.2x1", category: .action,
+            action: { [weak self] in self?.splitFocused(direction: .vertical) }
+        ))
+        items.append(CommandPaletteItem(
+            title: "Close Panel", icon: "xmark.square", category: .action,
+            action: { [weak self] in self?.closeFocusedPanel() }
+        ))
+        items.append(CommandPaletteItem(
+            title: "New Tab", icon: "plus.square", category: .action,
+            action: { [weak self] in self?.addTab() }
+        ))
+        items.append(CommandPaletteItem(
+            title: "Toggle Sidebar", icon: "sidebar.right", category: .action,
+            action: { [weak self] in self?.showSidebar.toggle() }
+        ))
+        items.append(CommandPaletteItem(
+            title: "Semantic Search", icon: "magnifyingglass", category: .action,
+            action: { [weak self] in self?.showSemanticSearch = true }
+        ))
+        items.append(CommandPaletteItem(
+            title: "Save Current Command", icon: "bookmark.fill", category: .action,
+            action: { [weak self] in self?.showSaveCommandSheet = true }
+        ))
+
+        // Saved commands
+        for cmd in savedCommands {
+            items.append(CommandPaletteItem(
+                title: cmd.name,
+                subtitle: cmd.commandTemplate,
+                icon: "bookmark",
+                category: .savedCommand,
+                action: { [weak self] in self?.insertSavedCommand(cmd) }
+            ))
+        }
+
+        // Recent history
+        if let recent = try? historyEngine?.recentCommands(limit: 20) {
+            let uniqueCommands = Array(Set(recent.map(\.command)).prefix(15))
+            for cmd in uniqueCommands {
+                items.append(CommandPaletteItem(
+                    title: cmd, icon: "clock", category: .history,
+                    action: { [weak self] in
+                        let ws = self?.activeWorkspace
+                        guard let ws,
+                              let leaf = ws.allLeaves(in: ws.root).first(where: { $0.id == ws.focusedPanelID }),
+                              let controller = self?.controllers[leaf.sessionID] else { return }
+                        Task { await controller.sendString(cmd) }
+                    }
+                ))
+            }
+        }
+
+        return items
+    }
+}
+
+// MARK: - App Entry Point
+
+@main
+struct TerminusApp: App {
+    @State private var appState = AppState()
+
+    var body: some Scene {
+        WindowGroup {
+            Group {
+                if appState.hasCompletedOnboarding {
+                    MainView(appState: appState)
+                } else {
+                    OnboardingView(secureStorage: appState.secureStorage) {
+                        appState.completeOnboarding()
+                    }
+                }
+            }
+            .preferredColorScheme(.dark)
+        }
+        .windowStyle(.titleBar)
+        .defaultSize(width: 1200, height: 800)
+        .commands {
+            TerminusCommands(appState: appState)
+        }
+
+        Settings {
+            SettingsView(secureStorage: appState.secureStorage)
+        }
+    }
+}
+
+// MARK: - Menu Commands
+
+struct TerminusCommands: Commands {
+    let appState: AppState
+
+    var body: some Commands {
+        CommandGroup(after: .newItem) {
+            Button("New Tab") {
+                appState.addTab()
+            }
+            .keyboardShortcut("t", modifiers: .command)
+
+            Divider()
+
+            Button("Split Horizontally") {
+                appState.splitFocused(direction: .horizontal)
+            }
+            .keyboardShortcut("d", modifiers: .command)
+
+            Button("Split Vertically") {
+                appState.splitFocused(direction: .vertical)
+            }
+            .keyboardShortcut("d", modifiers: [.command, .shift])
+
+            Divider()
+
+            Button("Close Panel") {
+                appState.closeFocusedPanel()
+            }
+            .keyboardShortcut("w", modifiers: .command)
+        }
+
+        CommandGroup(after: .toolbar) {
+            Button("Command Palette") {
+                appState.showCommandPalette.toggle()
+            }
+            .keyboardShortcut("p", modifiers: [.command, .shift])
+
+            Button("Semantic Search") {
+                appState.showSemanticSearch.toggle()
+            }
+            .keyboardShortcut("f", modifiers: [.command, .shift])
+
+            Button("Toggle Sidebar") {
+                appState.showSidebar.toggle()
+            }
+            .keyboardShortcut("b", modifiers: .command)
+
+            Button("System Monitor") {
+                appState.showMetrics.toggle()
+            }
+            .keyboardShortcut("m", modifiers: [.command, .shift])
+
+            Divider()
+
+            Button("Focus Next Panel") {
+                appState.activeWorkspace.focusNext()
+            }
+            .keyboardShortcut("]", modifiers: [.command, .shift])
+
+            Button("Focus Previous Panel") {
+                appState.activeWorkspace.focusPrevious()
+            }
+            .keyboardShortcut("[", modifiers: [.command, .shift])
+
+            Divider()
+
+            Button("Focus Panel Right") {
+                appState.activeWorkspace.focusInDirection(.horizontal, forward: true)
+            }
+            .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+
+            Button("Focus Panel Left") {
+                appState.activeWorkspace.focusInDirection(.horizontal, forward: false)
+            }
+            .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+
+            Button("Focus Panel Down") {
+                appState.activeWorkspace.focusInDirection(.vertical, forward: true)
+            }
+            .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+
+            Button("Focus Panel Up") {
+                appState.activeWorkspace.focusInDirection(.vertical, forward: false)
+            }
+            .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+        }
+    }
+}
+
+// MARK: - Main View
+
+struct MainView: View {
+    @Bindable var appState: AppState
+
+    var body: some View {
+        ZStack {
+            VStack(spacing: 0) {
+                // Tab bar (only show if multiple tabs)
+                if appState.windowState.tabs.count > 1 {
+                    TabBarView(appState: appState)
+                        .frame(height: 32)
+                        .background(TerminusColors.toolbarBackground)
+
+                    Rectangle()
+                        .fill(TerminusColors.divider)
+                        .frame(height: 1)
+                }
+
+                // Toolbar
+                TerminusToolbar(appState: appState)
+                    .frame(height: 38)
+                    .background(TerminusColors.toolbarBackground)
+
+                Rectangle()
+                    .fill(TerminusColors.divider)
+                    .frame(height: 1)
+
+                // Main content area: metrics + panels + sidebar
+                HStack(spacing: 0) {
+                    // System metrics panel (left)
+                    if appState.showMetrics {
+                        MetricsPanel()
+                            .transition(.move(edge: .leading).combined(with: .opacity))
+
+                        Rectangle()
+                            .fill(TerminusColors.divider)
+                            .frame(width: 1)
+                    }
+
+                    // Panel workspace
+                    PanelTreeView(
+                        node: appState.activeWorkspace.root,
+                        appState: appState
+                    )
+
+                    // Saved commands sidebar (right)
+                    if appState.showSidebar {
+                        Rectangle()
+                            .fill(TerminusColors.divider)
+                            .frame(width: 1)
+
+                        SavedCommandsSidebar(
+                            commands: appState.savedCommands,
+                            onSelect: { appState.insertSavedCommand($0) },
+                            onDelete: { appState.deleteSavedCommand($0) },
+                            onAdd: { appState.showSaveCommandSheet = true }
+                        )
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
+                }
+            }
+            .background(appState.theme.backgroundColor)
+
+            // Command palette overlay
+            if appState.showCommandPalette {
+                Color.black.opacity(0.3)
+                    .ignoresSafeArea()
+                    .onTapGesture { appState.showCommandPalette = false }
+
+                VStack {
+                    CommandPaletteView(
+                        isPresented: $appState.showCommandPalette,
+                        items: appState.buildPaletteItems()
+                    )
+                    .padding(.top, 80)
+
+                    Spacer()
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            // Semantic search overlay
+            if appState.showSemanticSearch {
+                Color.black.opacity(0.3)
+                    .ignoresSafeArea()
+                    .onTapGesture { appState.showSemanticSearch = false }
+
+                VStack {
+                    SemanticSearchOverlay(
+                        isPresented: $appState.showSemanticSearch,
+                        query: $appState.semanticSearchQuery,
+                        results: appState.semanticSearchResults,
+                        onSearch: { query in
+                            Task {
+                                await performSemanticSearch(query)
+                            }
+                        },
+                        onSelect: { command in
+                            appState.insertCommandString(command)
+                            appState.showSemanticSearch = false
+                        }
+                    )
+                    .padding(.top, 80)
+
+                    Spacer()
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .animation(.easeInOut(duration: TerminusDesign.animationFast), value: appState.showSidebar)
+        .animation(.easeInOut(duration: TerminusDesign.animationFast), value: appState.showMetrics)
+        .animation(.easeInOut(duration: TerminusDesign.animationFast), value: appState.showCommandPalette)
+        .animation(.easeInOut(duration: TerminusDesign.animationFast), value: appState.showSemanticSearch)
+        .sheet(isPresented: $appState.showSaveCommandSheet) {
+            SaveCommandSheet(
+                isPresented: $appState.showSaveCommandSheet,
+                initialCommand: "",
+                onSave: { appState.saveCommand($0) }
+            )
+        }
+    }
+
+    private func performSemanticSearch(_ query: String) async {
+        guard let pipeline = appState.embeddingPipeline, !query.isEmpty else {
+            appState.semanticSearchResults = []
+            return
+        }
+
+        do {
+            let results = try await pipeline.search(query: query, limit: 15)
+            appState.semanticSearchResults = results.map { ($0.matchedText, $0.similarity) }
+        } catch {
+            // If AI is not configured, fall back to history search
+            if let history = appState.historyEngine {
+                let entries = (try? history.search(query: query, limit: 15)) ?? []
+                appState.semanticSearchResults = entries.map { ($0.command, 1.0) }
+            }
+        }
+    }
+}
+
+// MARK: - Insert Command String Helper
+
+extension AppState {
+    func insertCommandString(_ command: String) {
+        let ws = activeWorkspace
+        let leaves = ws.allLeaves(in: ws.root)
+        guard let focused = leaves.first(where: { $0.id == ws.focusedPanelID }),
+              let controller = controllers[focused.sessionID] else { return }
+        Task { await controller.sendString(command) }
+    }
+}
+
+// MARK: - Semantic Search Overlay
+
+struct SemanticSearchOverlay: View {
+    @Binding var isPresented: Bool
+    @Binding var query: String
+    let results: [(String, Float)]
+    let onSearch: (String) -> Void
+    let onSelect: (String) -> Void
+
+    @FocusState private var isFocused: Bool
+    @State private var selectedIndex: Int = 0
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Search field
+            HStack(spacing: TerminusDesign.spacingSM) {
+                Image(systemName: "sparkle.magnifyingglass")
+                    .font(.system(size: 14))
+                    .foregroundStyle(TerminusColors.accentPrimary)
+
+                TextField("Search commands semantically...", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.terminusUI(size: 15))
+                    .foregroundStyle(TerminusColors.textPrimary)
+                    .focused($isFocused)
+                    .onSubmit {
+                        if selectedIndex < results.count {
+                            onSelect(results[selectedIndex].0)
+                        }
+                    }
+                    .onChange(of: query) { _, newValue in
+                        onSearch(newValue)
+                        selectedIndex = 0
+                    }
+            }
+            .padding(.horizontal, TerminusDesign.spacingMD)
+            .padding(.vertical, TerminusDesign.spacingMD)
+
+            Divider().background(TerminusColors.divider)
+
+            // Results
+            if results.isEmpty && !query.isEmpty {
+                VStack {
+                    Spacer()
+                    Text("No results")
+                        .font(.terminusUI(size: 14))
+                        .foregroundStyle(TerminusColors.textTertiary)
+                    Spacer()
+                }
+                .frame(height: 100)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(results.enumerated()), id: \.offset) { index, result in
+                            HStack {
+                                Text(result.0)
+                                    .font(.terminusMono(size: 13))
+                                    .foregroundStyle(TerminusColors.textPrimary)
+                                    .lineLimit(2)
+
+                                Spacer()
+
+                                // Similarity badge
+                                Text("\(Int(result.1 * 100))%")
+                                    .font(.terminusUI(size: 10, weight: .medium))
+                                    .foregroundStyle(TerminusColors.textTertiary)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule().fill(Color.white.opacity(0.06))
+                                    )
+                            }
+                            .padding(.horizontal, TerminusDesign.spacingMD)
+                            .padding(.vertical, 6)
+                            .background(
+                                index == selectedIndex
+                                    ? TerminusColors.accentPrimary.opacity(0.15)
+                                    : Color.clear
+                            )
+                            .contentShape(Rectangle())
+                            .onTapGesture { onSelect(result.0) }
+                        }
+                    }
+                    .padding(.vertical, TerminusDesign.spacingXS)
+                }
+                .frame(maxHeight: 300)
+            }
+
+            Divider().background(TerminusColors.divider)
+
+            HStack(spacing: TerminusDesign.spacingMD) {
+                Text("Powered by OpenRouter embeddings")
+                    .font(.terminusUI(size: 10))
+                    .foregroundStyle(TerminusColors.textTertiary)
+                Spacer()
+                keyHint("Esc", label: "close")
+            }
+            .padding(.horizontal, TerminusDesign.spacingMD)
+            .padding(.vertical, 6)
+        }
+        .frame(width: 550)
+        .background(
+            RoundedRectangle(cornerRadius: TerminusDesign.radiusLG)
+                .fill(TerminusColors.sidebarBackground)
+                .shadow(color: .black.opacity(0.5), radius: 20, y: 8)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: TerminusDesign.radiusLG)
+                .stroke(TerminusColors.panelBorder, lineWidth: 1)
+        )
+        .onAppear { isFocused = true }
+        .onKeyPress(.escape) {
+            isPresented = false
+            return .handled
+        }
+        .onKeyPress(.upArrow) {
+            if selectedIndex > 0 { selectedIndex -= 1 }
+            return .handled
+        }
+        .onKeyPress(.downArrow) {
+            if selectedIndex < results.count - 1 { selectedIndex += 1 }
+            return .handled
+        }
+    }
+
+    private func keyHint(_ key: String, label: String) -> some View {
+        HStack(spacing: 3) {
+            Text(key)
+                .font(.terminusUI(size: 10, weight: .medium))
+                .foregroundStyle(TerminusColors.textTertiary)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .background(RoundedRectangle(cornerRadius: 3).fill(Color.white.opacity(0.06)))
+            Text(label)
+                .font(.terminusUI(size: 10))
+                .foregroundStyle(TerminusColors.textTertiary)
+        }
+    }
+}
+
+// MARK: - Tab Bar
+
+struct TabBarView: View {
+    @Bindable var appState: AppState
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(appState.windowState.tabs.enumerated()), id: \.element.id) { index, tab in
+                TabItemView(
+                    title: tab.title,
+                    isActive: index == appState.windowState.activeTabIndex,
+                    onSelect: { appState.windowState.selectTab(at: index) },
+                    onClose: {
+                        if appState.windowState.tabs.count > 1 {
+                            appState.windowState.closeTab(at: index)
+                        }
+                    }
+                )
+
+                if index < appState.windowState.tabs.count - 1 {
+                    Rectangle()
+                        .fill(TerminusColors.divider)
+                        .frame(width: 1)
+                }
+            }
+
+            // Add tab button
+            Button(action: { appState.addTab() }) {
+                Image(systemName: "plus")
+                    .font(.system(size: 11))
+                    .foregroundStyle(TerminusColors.textTertiary)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, TerminusDesign.spacingSM)
+
+            Spacer()
+        }
+        .padding(.horizontal, TerminusDesign.spacingXS)
+    }
+}
+
+struct TabItemView: View {
+    let title: String
+    let isActive: Bool
+    let onSelect: () -> Void
+    let onClose: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: TerminusDesign.spacingXS) {
+            Text(title)
+                .font(.terminusUI(size: 12, weight: isActive ? .medium : .regular))
+                .foregroundStyle(isActive ? TerminusColors.textPrimary : TerminusColors.textSecondary)
+                .lineLimit(1)
+
+            if isHovering || isActive {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(TerminusColors.textTertiary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, TerminusDesign.spacingMD)
+        .padding(.vertical, TerminusDesign.spacingXS)
+        .background(
+            isActive
+                ? TerminusColors.sidebarBackground.opacity(0.8)
+                : Color.clear
+        )
+        .clipShape(RoundedRectangle(cornerRadius: TerminusDesign.radiusSM))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onSelect)
+        .onHover { isHovering = $0 }
+    }
+}
+
+// MARK: - Panel Tree View
+
+struct PanelTreeView: View {
+    let node: PanelNode
+    @Bindable var appState: AppState
+
+    var body: some View {
+        switch node {
+        case .leaf(let leaf):
+            let controller = appState.controllerForSession(leaf.sessionID)
+            TerminalPanelView(
+                controller: controller,
+                theme: appState.theme,
+                isFocused: leaf.id == appState.activeWorkspace.focusedPanelID
+            )
+            .onTapGesture {
+                appState.activeWorkspace.focusPanel(leaf.id)
+            }
+
+        case .split(let split):
+            SplitPanelView(split: split, appState: appState)
+        }
+    }
+}
+
+// MARK: - Split Panel View
+
+struct SplitPanelView: View {
+    let split: PanelSplit
+    @Bindable var appState: AppState
+
+    var body: some View {
+        let ratio = appState.activeWorkspace.splitRatios[split.id] ?? split.ratio
+
+        GeometryReader { geometry in
+            let isHorizontal = split.direction == .horizontal
+
+            if isHorizontal {
+                HStack(spacing: 0) {
+                    PanelTreeView(node: split.first, appState: appState)
+                        .frame(width: max(TerminusDesign.panelMinWidth, geometry.size.width * ratio - 1))
+
+                    SplitDivider(
+                        isHorizontal: true,
+                        onDrag: { delta in
+                            let newRatio = ratio + delta / geometry.size.width
+                            appState.activeWorkspace.updateSplitRatio(split.id, ratio: newRatio)
+                        },
+                        onDoubleTap: {
+                            appState.activeWorkspace.updateSplitRatio(split.id, ratio: 0.5)
+                        }
+                    )
+
+                    PanelTreeView(node: split.second, appState: appState)
+                }
+            } else {
+                VStack(spacing: 0) {
+                    PanelTreeView(node: split.first, appState: appState)
+                        .frame(height: max(TerminusDesign.panelMinHeight, geometry.size.height * ratio - 1))
+
+                    SplitDivider(
+                        isHorizontal: false,
+                        onDrag: { delta in
+                            let newRatio = ratio + delta / geometry.size.height
+                            appState.activeWorkspace.updateSplitRatio(split.id, ratio: newRatio)
+                        },
+                        onDoubleTap: {
+                            appState.activeWorkspace.updateSplitRatio(split.id, ratio: 0.5)
+                        }
+                    )
+
+                    PanelTreeView(node: split.second, appState: appState)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Split Divider
+
+struct SplitDivider: View {
+    let isHorizontal: Bool
+    let onDrag: (CGFloat) -> Void
+    let onDoubleTap: () -> Void
+
+    @State private var isDragging = false
+
+    var body: some View {
+        Rectangle()
+            .fill(isDragging ? TerminusColors.accentPrimary.opacity(0.5) : TerminusColors.divider)
+            .frame(
+                width: isHorizontal ? 2 : nil,
+                height: isHorizontal ? nil : 2
+            )
+            .contentShape(Rectangle().size(
+                width: isHorizontal ? TerminusDesign.dividerHitArea : 10000,
+                height: isHorizontal ? 10000 : TerminusDesign.dividerHitArea
+            ))
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        isDragging = true
+                        let delta = isHorizontal
+                            ? value.translation.width
+                            : value.translation.height
+                        onDrag(delta)
+                    }
+                    .onEnded { _ in
+                        isDragging = false
+                    }
+            )
+            .onTapGesture(count: 2) {
+                onDoubleTap()
+            }
+            .onHover { hovering in
+                if hovering {
+                    if isHorizontal {
+                        NSCursor.resizeLeftRight.push()
+                    } else {
+                        NSCursor.resizeUpDown.push()
+                    }
+                } else {
+                    NSCursor.pop()
+                }
+            }
+    }
+}
+
+// MARK: - Toolbar
+
+struct TerminusToolbar: View {
+    @Bindable var appState: AppState
+
+    var body: some View {
+        HStack(spacing: TerminusDesign.spacingMD) {
+            // Split buttons
+            Button(action: { appState.splitFocused(direction: .horizontal) }) {
+                Image(systemName: "rectangle.split.1x2")
+                    .font(.system(size: 13))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(TerminusColors.textSecondary)
+            .help("Split Horizontally (Cmd+D)")
+
+            Button(action: { appState.splitFocused(direction: .vertical) }) {
+                Image(systemName: "rectangle.split.2x1")
+                    .font(.system(size: 13))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(TerminusColors.textSecondary)
+            .help("Split Vertically (Cmd+Shift+D)")
+
+            Divider()
+                .frame(height: 16)
+
+            Button(action: { appState.closeFocusedPanel() }) {
+                Image(systemName: "xmark.square")
+                    .font(.system(size: 13))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(TerminusColors.textSecondary)
+            .help("Close Panel (Cmd+W)")
+
+            Spacer()
+
+            // Panel indicator
+            let count = appState.activeWorkspace.panelCount
+            if count > 1 {
+                Text("\(count) panels")
+                    .font(.terminusUI(size: 11))
+                    .foregroundStyle(TerminusColors.textTertiary)
+            }
+
+            Spacer()
+
+            // Command palette
+            Button(action: { appState.showCommandPalette.toggle() }) {
+                Image(systemName: "command")
+                    .font(.system(size: 13))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(TerminusColors.textSecondary)
+            .help("Command Palette (Cmd+Shift+P)")
+
+            Button(action: { appState.showSemanticSearch.toggle() }) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 13))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(TerminusColors.textSecondary)
+            .help("Search (Cmd+Shift+F)")
+
+            Button(action: { appState.showMetrics.toggle() }) {
+                Image(systemName: appState.showMetrics ? "gauge.with.dots.needle.33percent.badge.plus" : "gauge.with.dots.needle.33percent")
+                    .font(.system(size: 13))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(
+                appState.showMetrics ? TerminusColors.accentPrimary : TerminusColors.textSecondary
+            )
+            .help("System Monitor (Cmd+Shift+M)")
+
+            Button(action: { appState.showSidebar.toggle() }) {
+                Image(systemName: appState.showSidebar ? "sidebar.right.fill" : "sidebar.right")
+                    .font(.system(size: 13))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(
+                appState.showSidebar ? TerminusColors.accentPrimary : TerminusColors.textSecondary
+            )
+            .help("Saved Commands (Cmd+B)")
+        }
+        .padding(.horizontal, TerminusDesign.spacingMD)
+    }
+}

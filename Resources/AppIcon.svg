@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <!-- Background gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a1b2e"/>
+      <stop offset="50%" stop-color="#12131f"/>
+      <stop offset="100%" stop-color="#0d0e18"/>
+    </linearGradient>
+    <!-- Accent gradient for the prompt chevron -->
+    <linearGradient id="chevronGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6BA3FF"/>
+      <stop offset="100%" stop-color="#4080E0"/>
+    </linearGradient>
+    <!-- Cursor glow -->
+    <linearGradient id="cursorGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#8BC5FF"/>
+      <stop offset="100%" stop-color="#5A9AE6"/>
+    </linearGradient>
+    <!-- Subtle inner shadow -->
+    <filter id="innerGlow" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="8" result="blur"/>
+      <feOffset dx="0" dy="4" result="offsetBlur"/>
+      <feComposite in="SourceGraphic" in2="offsetBlur" operator="over"/>
+    </filter>
+    <!-- Drop shadow for depth -->
+    <filter id="dropShadow">
+      <feDropShadow dx="0" dy="6" stdDeviation="12" flood-color="#000" flood-opacity="0.4"/>
+    </filter>
+    <!-- Glow effect for cursor -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background rounded square (macOS icon shape) -->
+  <rect x="32" y="32" width="960" height="960" rx="220" ry="220" fill="url(#bgGrad)"/>
+
+  <!-- Subtle border -->
+  <rect x="32" y="32" width="960" height="960" rx="220" ry="220"
+        fill="none" stroke="#2a2d4a" stroke-width="2" opacity="0.6"/>
+
+  <!-- Top bar decoration (3 dots) -->
+  <circle cx="200" cy="195" r="18" fill="#FF5F57" opacity="0.85"/>
+  <circle cx="260" cy="195" r="18" fill="#FFBD2E" opacity="0.85"/>
+  <circle cx="320" cy="195" r="18" fill="#28CA41" opacity="0.85"/>
+
+  <!-- Separator line under dots -->
+  <line x1="140" y1="240" x2="884" y2="240" stroke="#2a2d4a" stroke-width="1.5" opacity="0.5"/>
+
+  <!-- Terminal prompt chevron ">" -->
+  <g filter="url(#dropShadow)">
+    <polyline points="220,440 340,530 220,620"
+              fill="none" stroke="url(#chevronGrad)" stroke-width="48"
+              stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Cursor block (blinking cursor) -->
+  <g filter="url(#glow)">
+    <rect x="400" y="490" width="28" height="80" rx="4" fill="url(#cursorGrad)" opacity="0.95"/>
+  </g>
+
+  <!-- Stylized text lines (representing terminal output) -->
+  <!-- Line 1: shorter -->
+  <rect x="220" y="330" width="320" height="12" rx="6" fill="#4a5080" opacity="0.35"/>
+  <rect x="560" y="330" width="180" height="12" rx="6" fill="#6BA3FF" opacity="0.2"/>
+
+  <!-- Line 3: output below prompt -->
+  <rect x="220" y="700" width="440" height="12" rx="6" fill="#4a5080" opacity="0.3"/>
+  <rect x="680" y="700" width="120" height="12" rx="6" fill="#28CA41" opacity="0.25"/>
+
+  <!-- Line 4 -->
+  <rect x="220" y="750" width="280" height="12" rx="6" fill="#4a5080" opacity="0.25"/>
+
+  <!-- Line 5 -->
+  <rect x="220" y="800" width="380" height="12" rx="6" fill="#4a5080" opacity="0.2"/>
+  <rect x="620" y="800" width="90" height="12" rx="6" fill="#FFBD2E" opacity="0.2"/>
+
+  <!-- Bottom accent: subtle "T" watermark -->
+  <text x="512" y="920" text-anchor="middle" font-family="SF Mono, Menlo, monospace"
+        font-size="60" font-weight="700" fill="#3a3d5a" opacity="0.15"
+        letter-spacing="12">TERMINUS</text>
+</svg>
