@@ -18,8 +18,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Worth-Doing/terminus/releases/latest/download/Terminus-0.1.0.zip">
-    <img src="https://img.shields.io/badge/Download-Terminus%200.1.0-blue?style=for-the-badge&logo=apple" alt="Download Terminus" />
+  <a href="https://github.com/Worth-Doing/terminus/releases/latest/download/Terminus-0.2.0.dmg">
+    <img src="https://img.shields.io/badge/Download-Terminus%200.2.0%20DMG-blue?style=for-the-badge&logo=apple" alt="Download Terminus DMG" />
   </a>
 </p>
 
@@ -35,11 +35,11 @@
 
 ## Download
 
-**[Download Terminus-0.1.0.zip](https://github.com/Worth-Doing/terminus/releases/latest/download/Terminus-0.1.0.zip)**
+**[Download Terminus-0.2.0.dmg](https://github.com/Worth-Doing/terminus/releases/latest/download/Terminus-0.2.0.dmg)** (4.4 MB)
 
 > Signed and notarized by Apple. Runs on macOS 14+ (Sonoma and later), Apple Silicon & Intel.
 >
-> Unzip and drag `Terminus.app` to Applications.
+> Open the DMG and drag `Terminus.app` to Applications.
 
 ---
 
@@ -226,16 +226,22 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | Metric | Value |
 |--------|-------|
 | Swift files | 30 |
-| Lines of code | 8,725 |
+| Lines of code | ~9,600 |
 | Modules | 17 |
 | Themes | 6 (2 light, 4 dark) |
 | External dependencies | 0 |
-| Binary size | 3.2 MB |
+| Binary size | 3.4 MB |
 
 ---
 
 ## Roadmap
 
+- [x] Mouse reporting (modes 1000, 1002, 1003)
+- [x] Hyperlink support (OSC 8)
+- [x] Glass UI redesign (iOS 26 aesthetic)
+- [x] Full prediction engine (7-signal scoring)
+- [x] N-gram command sequence learning
+- [x] Performance optimization (dirty region tracking, render batching)
 - [ ] Ligatures support (Fira Code, JetBrains Mono)
 - [ ] Sixel image protocol
 - [ ] tmux integration
@@ -243,8 +249,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 - [ ] Custom theme editor / theme import
 - [ ] Command workflow automation
 - [ ] iCloud sync for saved commands
-- [ ] Mouse reporting (SGR mode)
-- [ ] Hyperlink support (OSC 8)
+- [ ] Session save/restore
 
 ---
 

@@ -139,8 +139,21 @@ public class TerminalNSView: NSView, @preconcurrency NSTextInputClient {
         cursorVisible = true
         cursorTimer = Timer.scheduledTimer(withTimeInterval: 0.53, repeats: true) { [weak self] _ in
             DispatchQueue.main.async {
-                self?.cursorVisible.toggle()
-                self?.needsDisplay = true
+                guard let self else { return }
+                self.cursorVisible.toggle()
+                // Only invalidate the cursor region instead of full redraw
+                if let buffer = self.terminalBuffer {
+                    let snapshot = buffer.snapshot()
+                    let cursorRect = CGRect(
+                        x: CGFloat(snapshot.cursorColumn) * self.cellWidth,
+                        y: CGFloat(snapshot.cursorRow) * self.cellHeight,
+                        width: self.cellWidth,
+                        height: self.cellHeight
+                    )
+                    self.setNeedsDisplay(cursorRect)
+                } else {
+                    self.needsDisplay = true
+                }
             }
         }
     }

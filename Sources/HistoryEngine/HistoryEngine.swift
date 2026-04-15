@@ -132,6 +132,98 @@ public final class HistoryEngine: @unchecked Sendable {
         )
     }
 
+    // MARK: - N-gram Querying
+
+    public func queryNgrams(context: String, gramSize: Int = 2, limit: Int = 20) throws -> [(prediction: String, count: Int)] {
+        let rows = try dataAccess.db.query(
+            """
+            SELECT prediction, count FROM command_ngrams
+            WHERE gram_size = ? AND context = ?
+            ORDER BY count DESC
+            LIMIT ?
+            """,
+            parameters: [.integer(Int64(gramSize)), .text(context), .integer(Int64(limit))]
+        )
+
+        return rows.compactMap { row in
+            guard let prediction = row["prediction"]?.stringValue,
+                  let count = row["count"]?.intValue else { return nil }
+            return (prediction: prediction, count: Int(count))
+        }
+    }
+
+    // MARK: - Most Recent Execution
+
+    public func mostRecentExecution(command: String) throws -> Date? {
+        let rows = try dataAccess.db.query(
+            """
+            SELECT started_at FROM command_history
+            WHERE command = ?
+            ORDER BY started_at DESC
+            LIMIT 1
+            """,
+            parameters: [.text(command)]
+        )
+
+        guard let row = rows.first,
+              let timestamp = row["started_at"]?.doubleValue else { return nil }
+        return Date(timeIntervalSince1970: timestamp)
+    }
+
+    // MARK: - Commands by Project Type
+
+    public func commandsInProjectType(_ projectType: ProjectType, limit: Int = 100) throws -> [String] {
+        let rows = try dataAccess.db.query(
+            """
+            SELECT DISTINCT command FROM command_history
+            WHERE project_type = ?
+            ORDER BY started_at DESC
+            LIMIT ?
+            """,
+            parameters: [.text(projectType.rawValue), .integer(Int64(limit))]
+        )
+
+        return rows.compactMap { $0["command"]?.stringValue }
+    }
+
+    // MARK: - Directory Frequency for Command
+
+    public func commandFrequencyInDirectory(command: String, directory: String) throws -> Int {
+        let result = try dataAccess.db.query(
+            """
+            SELECT COUNT(*) as freq FROM command_history
+            WHERE command = ? AND working_directory = ?
+            """,
+            parameters: [.text(command), .text(directory)]
+        )
+        return Int(result.first?["freq"]?.intValue ?? 0)
+    }
+
+    // MARK: - Prediction Feedback
+
+    public func recordPredictionFeedback(
+        predicted: String,
+        accepted: Bool,
+        directory: String,
+        previousCommand: String?
+    ) throws {
+        try dataAccess.db.execute(
+            """
+            INSERT INTO prediction_feedback
+                (id, predicted_command, was_accepted, context_directory, context_previous_command, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            parameters: [
+                .text(UUID().uuidString),
+                .text(predicted),
+                .integer(accepted ? 1 : 0),
+                .text(directory),
+                previousCommand.map { .text($0) } ?? .null,
+                .real(Date().timeIntervalSince1970),
+            ]
+        )
+    }
+
     // MARK: - Private
 
     private func rowToCommandEntry(_ row: [String: SQLiteValue]) -> CommandEntry? {

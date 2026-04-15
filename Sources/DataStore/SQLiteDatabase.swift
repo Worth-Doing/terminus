@@ -48,6 +48,34 @@ public enum SQLiteValue: Sendable, CustomStringConvertible {
     }
 }
 
+// MARK: - Typed Row Wrapper
+
+/// Type-safe wrapper around query result rows.
+/// Provides typed accessors instead of raw dictionary lookups.
+public struct Row: Sendable {
+    private let values: [String: SQLiteValue]
+
+    public init(_ values: [String: SQLiteValue]) {
+        self.values = values
+    }
+
+    public func string(_ column: String) -> String? { values[column]?.stringValue }
+    public func int(_ column: String) -> Int64? { values[column]?.intValue }
+    public func double(_ column: String) -> Double? { values[column]?.doubleValue }
+    public func blob(_ column: String) -> Data? { values[column]?.blobValue }
+    public func isNull(_ column: String) -> Bool { values[column]?.isNull ?? true }
+
+    public func date(_ column: String) -> Date? {
+        guard let ts = values[column]?.doubleValue else { return nil }
+        return Date(timeIntervalSince1970: ts)
+    }
+
+    /// Access the raw SQLiteValue dictionary for backward compatibility
+    public subscript(_ column: String) -> SQLiteValue? {
+        values[column]
+    }
+}
+
 // MARK: - SQLite Error
 
 public enum SQLiteError: Error, LocalizedError {

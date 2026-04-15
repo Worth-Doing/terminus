@@ -38,36 +38,47 @@ public actor EmbeddingPipeline {
 
     // MARK: - Index Commands
 
+    private static let batchSize = 100
+
     public func indexCommands(_ entries: [CommandEntry]) async throws {
         guard !entries.isEmpty else { return }
 
-        let texts = entries.map { buildEmbeddingText(for: $0) }
+        // Process in batches to avoid OOM/timeout on large histories
+        for batchStart in stride(from: 0, to: entries.count, by: Self.batchSize) {
+            let batchEnd = min(batchStart + Self.batchSize, entries.count)
+            let batch = Array(entries[batchStart..<batchEnd])
 
-        let embeddings = try await aiService.embeddings(
-            input: texts,
-            model: DefaultModels.embedding
-        )
+            let texts = batch.map { buildEmbeddingText(for: $0) }
 
-        for (entry, embedding) in zip(entries, embeddings) {
-            let embeddingData = embedding.withUnsafeBufferPointer {
-                Data(buffer: $0)
-            }
-
-            try dataAccess.db.execute(
-                """
-                INSERT OR REPLACE INTO command_embeddings
-                    (id, command_history_id, content_text, embedding, model, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                parameters: [
-                    .text(UUID().uuidString),
-                    .text(entry.id),
-                    .text(texts[0]),
-                    .blob(embeddingData),
-                    .text(DefaultModels.embedding.modelID),
-                    .real(Date().timeIntervalSince1970),
-                ]
+            let embeddings = try await aiService.embeddings(
+                input: texts,
+                model: DefaultModels.embedding
             )
+
+            for (entry, embedding) in zip(batch, embeddings) {
+                let embeddingData = embedding.withUnsafeBufferPointer {
+                    Data(buffer: $0)
+                }
+
+                // Deterministic ID prevents duplicates on re-indexing
+                let embeddingID = "emb-\(entry.id)"
+
+                try dataAccess.db.execute(
+                    """
+                    INSERT OR REPLACE INTO command_embeddings
+                        (id, command_history_id, content_text, embedding, model, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    parameters: [
+                        .text(embeddingID),
+                        .text(entry.id),
+                        .text(buildEmbeddingText(for: entry)),
+                        .blob(embeddingData),
+                        .text(DefaultModels.embedding.modelID),
+                        .real(Date().timeIntervalSince1970),
+                    ]
+                )
+            }
         }
     }
 

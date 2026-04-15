@@ -116,6 +116,10 @@ public struct TerminusTheme: Sendable, Identifiable {
     public var chromeHover: Color
     public var chromeOverlay: Color
 
+    // Glass properties
+    public var glassBackgroundOpacity: Double
+    public var glassBorderOpacity: Double
+
     public init(
         id: String,
         name: String,
@@ -135,7 +139,9 @@ public struct TerminusTheme: Sendable, Identifiable {
         chromeTextTertiary: Color? = nil,
         chromeDivider: Color? = nil,
         chromeHover: Color? = nil,
-        chromeOverlay: Color? = nil
+        chromeOverlay: Color? = nil,
+        glassBackgroundOpacity: Double? = nil,
+        glassBorderOpacity: Double? = nil
     ) {
         self.id = id
         self.name = name
@@ -174,6 +180,9 @@ public struct TerminusTheme: Sendable, Identifiable {
         self.chromeOverlay = chromeOverlay ?? (isDark
             ? Color.black.opacity(0.6)
             : Color.black.opacity(0.3))
+
+        self.glassBackgroundOpacity = glassBackgroundOpacity ?? (isDark ? 0.6 : 0.7)
+        self.glassBorderOpacity = glassBorderOpacity ?? (isDark ? 0.15 : 0.25)
     }
 
     /// Resolve a TerminalColor to a SwiftUI Color

@@ -29,8 +29,12 @@ public final class TerminalSessionController: TerminalInputHandler {
     public var selectedPredictionIndex: Int = 0
     public var inputPrefix: String = ""
 
+    // N-gram tracking
+    public var previousCommand: String?
+
     // Callbacks
     public var onCommandCompleted: ((String, Int32, String) -> Void)?
+    public var onWindowTitleChanged: ((String) -> Void)?
 
     private var outputTask: Task<Void, Never>?
 
@@ -59,6 +63,12 @@ public final class TerminalSessionController: TerminalInputHandler {
                 self?.handleShellEvent(event)
             }
         }
+
+        parser.onWindowTitleChanged = { [weak self] title in
+            Task { @MainActor [weak self] in
+                self?.onWindowTitleChanged?(title)
+            }
+        }
     }
 
     private func handleShellEvent(_ event: ShellIntegrationEvent) {
@@ -77,6 +87,7 @@ public final class TerminalSessionController: TerminalInputHandler {
             lastExitCode = exitCode
             if let command = currentCommand, !command.isEmpty {
                 onCommandCompleted?(command, exitCode, currentDirectory)
+                previousCommand = command
             }
             currentCommand = nil
         case .directoryChanged(let path):
@@ -101,6 +112,10 @@ public final class TerminalSessionController: TerminalInputHandler {
             for await data in outputStream {
                 guard let self else { break }
                 self.parser.feed(data)
+                // Yield to coalesce rapid data chunks before triggering render.
+                // Multiple data events arriving in the same run loop tick
+                // are batched into a single renderGeneration increment.
+                await Task.yield()
                 self.renderGeneration &+= 1
             }
             guard let self else { return }
@@ -217,9 +232,23 @@ struct TerminalStatusBar: View {
                 .font(.terminusUI(size: 10))
                 .foregroundStyle(theme.chromeTextTertiary)
         }
-        .padding(.horizontal, TerminusDesign.spacingSM)
-        .padding(.vertical, 3)
-        .background(theme.chromeBackground.opacity(0.9))
+        .padding(.horizontal, TerminusDesign.spacingMD)
+        .padding(.vertical, 4)
+        .glassBackground(isDark: theme.isDark)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(theme.isDark ? 0.08 : 0.15),
+                            Color.clear,
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .frame(height: 0.5)
+        }
     }
 
     private func shortenPath(_ path: String) -> String {

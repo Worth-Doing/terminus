@@ -16,6 +16,43 @@ import OnboardingUI
 import SettingsUI
 import SystemMonitor
 
+// MARK: - Service Container
+
+/// Holds all backend services and engines. Extracted from AppState to separate
+/// data/business logic from UI state. Initialized once at app launch.
+@MainActor
+struct ServiceContainer {
+    let secureStorage = SecureStorage()
+    let dataAccess: DataAccess?
+    let historyEngine: HistoryEngine?
+    let predictionEngine: PredictionEngine?
+    let savedCommandsManager: SavedCommandsManager?
+    let aiService: AIServiceClient?
+    let embeddingPipeline: EmbeddingPipeline?
+
+    init() {
+        do {
+            let da = try DataAccess.createDefault()
+            self.dataAccess = da
+            let he = HistoryEngine(dataAccess: da)
+            self.historyEngine = he
+            self.predictionEngine = PredictionEngine(history: he)
+            self.savedCommandsManager = SavedCommandsManager(dataAccess: da)
+            let ai = AIServiceClient(secureStorage: secureStorage)
+            self.aiService = ai
+            self.embeddingPipeline = EmbeddingPipeline(aiService: ai, dataAccess: da)
+        } catch {
+            print("Failed to initialize database: \(error)")
+            self.dataAccess = nil
+            self.historyEngine = nil
+            self.predictionEngine = nil
+            self.savedCommandsManager = nil
+            self.aiService = nil
+            self.embeddingPipeline = nil
+        }
+    }
+}
+
 // MARK: - App State
 
 @MainActor
@@ -29,13 +66,17 @@ final class AppState {
     let windowState = WindowState()
     var workspaces: [String: WorkspaceState] = [:]
 
-    let secureStorage = SecureStorage()
-    var dataAccess: DataAccess?
-    var historyEngine: HistoryEngine?
-    var predictionEngine: PredictionEngine?
-    var savedCommandsManager: SavedCommandsManager?
-    var aiService: AIServiceClient?
-    var embeddingPipeline: EmbeddingPipeline?
+    // Services (extracted into container)
+    let services: ServiceContainer
+
+    // Convenience accessors
+    var secureStorage: SecureStorage { services.secureStorage }
+    var dataAccess: DataAccess? { services.dataAccess }
+    var historyEngine: HistoryEngine? { services.historyEngine }
+    var predictionEngine: PredictionEngine? { services.predictionEngine }
+    var savedCommandsManager: SavedCommandsManager? { services.savedCommandsManager }
+    var aiService: AIServiceClient? { services.aiService }
+    var embeddingPipeline: EmbeddingPipeline? { services.embeddingPipeline }
 
     // UI state
     var showSidebar: Bool = false
@@ -49,6 +90,7 @@ final class AppState {
 
     init() {
         self.hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
+        self.services = ServiceContainer()
 
         // Load persisted settings
         let savedThemeID = UserDefaults.standard.string(forKey: "terminus.themeID") ?? "defaultLight"
@@ -65,23 +107,8 @@ final class AppState {
             self.theme.fontFamily = savedFontFamily
         }
 
-        // Initialize database and services
-        do {
-            let da = try DataAccess.createDefault()
-            self.dataAccess = da
-            let he = HistoryEngine(dataAccess: da)
-            self.historyEngine = he
-            self.predictionEngine = PredictionEngine(history: he)
-            self.savedCommandsManager = SavedCommandsManager(dataAccess: da)
-            let ai = AIServiceClient(secureStorage: secureStorage)
-            self.aiService = ai
-            self.embeddingPipeline = EmbeddingPipeline(aiService: ai, dataAccess: da)
-
-            // Load saved commands
-            self.savedCommands = (try? savedCommandsManager?.list()) ?? []
-        } catch {
-            print("Failed to initialize database: \(error)")
-        }
+        // Load saved commands
+        self.savedCommands = (try? savedCommandsManager?.list()) ?? []
 
         // Create first workspace
         let firstTab = windowState.tabs[0]
@@ -143,7 +170,7 @@ final class AppState {
 
         let controller = TerminalSessionController(session: session)
 
-        // Wire command completion to history engine
+        // Wire command completion to history engine + n-gram recording
         controller.onCommandCompleted = { [weak self] command, exitCode, directory in
             guard let self, let historyEngine = self.historyEngine else { return }
 
@@ -164,6 +191,28 @@ final class AppState {
             )
 
             try? historyEngine.record(entry)
+
+            // Record bigram for n-gram predictions
+            if let prev = controller.previousCommand, !prev.isEmpty {
+                try? historyEngine.recordNgram(
+                    context: prev,
+                    prediction: command,
+                    gramSize: 2,
+                    directory: directory
+                )
+            }
+        }
+
+        // Wire window title changes to tab title
+        controller.onWindowTitleChanged = { [weak self] title in
+            guard let self else { return }
+            for (index, tab) in self.windowState.tabs.enumerated() {
+                if let ws = self.workspaces[tab.workspaceID],
+                   ws.allLeaves(in: ws.root).contains(where: { $0.sessionID == sessionID }) {
+                    self.windowState.tabs[index].title = title
+                    break
+                }
+            }
         }
 
         controllers[sessionID] = controller
@@ -475,33 +524,38 @@ struct MainView: View {
                 // Tab bar (only show if multiple tabs)
                 if appState.windowState.tabs.count > 1 {
                     TabBarView(appState: appState)
-                        .frame(height: 32)
-                        .background(theme.chromeBackground)
-
-                    Rectangle()
-                        .fill(theme.chromeDivider)
-                        .frame(height: 1)
+                        .frame(height: 36)
+                        .glassBackground(isDark: theme.isDark)
                 }
 
-                // Toolbar
+                // Toolbar with glass treatment
                 TerminusToolbar(appState: appState)
-                    .frame(height: 38)
-                    .background(theme.chromeBackground)
-
-                Rectangle()
-                    .fill(theme.chromeDivider)
-                    .frame(height: 1)
+                    .frame(height: 40)
+                    .glassBackground(isDark: theme.isDark)
+                    .overlay(alignment: .bottom) {
+                        Rectangle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [theme.chromeDivider, theme.chromeDivider.opacity(0)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                            .frame(height: 1)
+                    }
 
                 // Main content area
                 HStack(spacing: 0) {
-                    // System metrics panel (left)
+                    // System metrics panel (left) — glass sidebar
                     if appState.showMetrics {
                         MetricsPanel(theme: theme)
+                            .glassBackground(isDark: theme.isDark)
+                            .overlay(alignment: .trailing) {
+                                Rectangle().fill(theme.chromeDivider).frame(width: 0.5)
+                            }
+                            .terminusShadow(.soft)
+                            .zIndex(1)
                             .transition(.move(edge: .leading).combined(with: .opacity))
-
-                        Rectangle()
-                            .fill(theme.chromeDivider)
-                            .frame(width: 1)
                     }
 
                     // Panel workspace
@@ -510,12 +564,8 @@ struct MainView: View {
                         appState: appState
                     )
 
-                    // Saved commands sidebar (right)
+                    // Saved commands sidebar (right) — glass sidebar
                     if appState.showSidebar {
-                        Rectangle()
-                            .fill(theme.chromeDivider)
-                            .frame(width: 1)
-
                         SavedCommandsSidebar(
                             commands: appState.savedCommands,
                             theme: theme,
@@ -523,15 +573,21 @@ struct MainView: View {
                             onDelete: { appState.deleteSavedCommand($0) },
                             onAdd: { appState.showSaveCommandSheet = true }
                         )
+                        .glassBackground(isDark: theme.isDark)
+                        .overlay(alignment: .leading) {
+                            Rectangle().fill(theme.chromeDivider).frame(width: 0.5)
+                        }
+                        .terminusShadow(.soft)
+                        .zIndex(1)
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
                 }
             }
             .background(theme.backgroundColor)
 
-            // Command palette overlay
+            // Command palette overlay — glass floating panel
             if appState.showCommandPalette {
-                theme.chromeOverlay
+                Color.black.opacity(theme.isDark ? 0.5 : 0.25)
                     .ignoresSafeArea()
                     .onTapGesture { appState.showCommandPalette = false }
 
@@ -541,16 +597,19 @@ struct MainView: View {
                         items: appState.buildPaletteItems(),
                         theme: theme
                     )
+                    .glassPanel(cornerRadius: TerminusDesign.radiusXL, shadow: .medium, isDark: theme.isDark)
                     .padding(.top, 80)
+                    .padding(.horizontal, 40)
 
                     Spacer()
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(.scale(scale: 0.96).combined(with: .opacity))
+                .zIndex(10)
             }
 
-            // Semantic search overlay
+            // Semantic search overlay — glass floating panel
             if appState.showSemanticSearch {
-                theme.chromeOverlay
+                Color.black.opacity(theme.isDark ? 0.5 : 0.25)
                     .ignoresSafeArea()
                     .onTapGesture { appState.showSemanticSearch = false }
 
@@ -570,17 +629,20 @@ struct MainView: View {
                             appState.showSemanticSearch = false
                         }
                     )
+                    .glassPanel(cornerRadius: TerminusDesign.radiusXL, shadow: .medium, isDark: theme.isDark)
                     .padding(.top, 80)
+                    .padding(.horizontal, 40)
 
                     Spacer()
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(.scale(scale: 0.96).combined(with: .opacity))
+                .zIndex(10)
             }
         }
-        .animation(.easeInOut(duration: TerminusDesign.animationFast), value: appState.showSidebar)
-        .animation(.easeInOut(duration: TerminusDesign.animationFast), value: appState.showMetrics)
-        .animation(.easeInOut(duration: TerminusDesign.animationFast), value: appState.showCommandPalette)
-        .animation(.easeInOut(duration: TerminusDesign.animationFast), value: appState.showSemanticSearch)
+        .animation(TerminusDesign.springDefault, value: appState.showSidebar)
+        .animation(TerminusDesign.springDefault, value: appState.showMetrics)
+        .animation(TerminusDesign.springSnappy, value: appState.showCommandPalette)
+        .animation(TerminusDesign.springSnappy, value: appState.showSemanticSearch)
         .sheet(isPresented: $appState.showSaveCommandSheet) {
             SaveCommandSheet(
                 isPresented: $appState.showSaveCommandSheet,
@@ -633,6 +695,7 @@ struct SemanticSearchOverlay: View {
 
     @FocusState private var isFocused: Bool
     @State private var selectedIndex: Int = 0
+    @State private var searchTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -653,8 +716,14 @@ struct SemanticSearchOverlay: View {
                         }
                     }
                     .onChange(of: query) { _, newValue in
-                        onSearch(newValue)
                         selectedIndex = 0
+                        // Debounce: wait 400ms before triggering API search
+                        searchTask?.cancel()
+                        searchTask = Task {
+                            try? await Task.sleep(for: .milliseconds(400))
+                            guard !Task.isCancelled else { return }
+                            onSearch(newValue)
+                        }
                     }
             }
             .padding(.horizontal, TerminusDesign.spacingMD)

@@ -11,6 +11,10 @@ public final class TerminalBuffer: @unchecked Sendable {
     public private(set) var scrollbackLines: [TerminalLine] = []
     public private(set) var isDirty: Bool = false
 
+    // Dirty region tracking — which rows changed since last snapshot
+    public private(set) var dirtyRows: Set<Int> = []
+    private var fullRedrawNeeded: Bool = true
+
     private let scrollbackLimit: Int
     private var currentAttributes: CellAttributes = .default
 
@@ -18,6 +22,15 @@ public final class TerminalBuffer: @unchecked Sendable {
     public var applicationCursorKeys: Bool = false
     public var bracketedPasteMode: Bool = false
     public var alternateScreenActive: Bool = false
+
+    // Mouse reporting mode
+    public enum MouseReportingMode: Sendable {
+        case none          // No mouse reporting
+        case press         // Mode 1000: Report button press
+        case pressRelease  // Mode 1002: Report press, release, and motion while pressed
+        case motion        // Mode 1003: Report all motion events
+    }
+    public var mouseReportingMode: MouseReportingMode = .none
 
     // Alternate screen buffer
     private var savedPrimaryLines: [TerminalLine] = []
@@ -27,7 +40,7 @@ public final class TerminalBuffer: @unchecked Sendable {
     public private(set) var scrollTop: Int = 0
     public private(set) var scrollBottom: Int
 
-    private let lock = NSLock()
+    private var unfairLock = os_unfair_lock()
 
     public init(size: TerminalSize = .default80x24, scrollbackLimit: Int = 10_000) {
         self.size = size
@@ -36,117 +49,154 @@ public final class TerminalBuffer: @unchecked Sendable {
         self.lines = (0..<size.rows).map { _ in TerminalLine(columns: size.columns) }
     }
 
+    // MARK: - Lock Helpers
+
+    @inline(__always)
+    private func withLock<T>(_ body: () throws -> T) rethrows -> T {
+        os_unfair_lock_lock(&unfairLock)
+        defer { os_unfair_lock_unlock(&unfairLock) }
+        return try body()
+    }
+
+    // MARK: - Write Lock for Parser
+
+    /// Call from EscapeSequenceParser.feed() to hold the lock for the entire
+    /// byte processing loop, eliminating per-operation lock overhead.
+    public func withWriteLock(_ body: () -> Void) {
+        os_unfair_lock_lock(&unfairLock)
+        body()
+        os_unfair_lock_unlock(&unfairLock)
+    }
+
     // MARK: - Dirty Tracking
 
     public func markClean() {
-        lock.lock()
-        isDirty = false
-        lock.unlock()
+        withLock {
+            isDirty = false
+            dirtyRows.removeAll(keepingCapacity: true)
+            fullRedrawNeeded = false
+        }
     }
 
     private func markDirty() {
         isDirty = true
     }
 
+    @inline(__always)
+    private func markRowDirty(_ row: Int) {
+        isDirty = true
+        dirtyRows.insert(row)
+    }
+
+    @inline(__always)
+    private func markAllRowsDirty() {
+        isDirty = true
+        fullRedrawNeeded = true
+    }
+
     // MARK: - Resize
 
     public func resize(_ newSize: TerminalSize) {
-        lock.lock()
-        defer { lock.unlock() }
+        withLock {
+            let oldCols = size.columns
+            let oldRows = size.rows
+            size = newSize
+            scrollBottom = newSize.rows - 1
+            scrollTop = 0
 
-        let oldCols = size.columns
-        let oldRows = size.rows
-        size = newSize
-        scrollBottom = newSize.rows - 1
-        scrollTop = 0
-
-        // Adjust existing lines to new column count
-        for i in 0..<lines.count {
-            if newSize.columns > oldCols {
-                lines[i].cells.append(
-                    contentsOf: Array(repeating: .blank, count: newSize.columns - oldCols)
-                )
-            } else if newSize.columns < oldCols {
-                lines[i].cells = Array(lines[i].cells.prefix(newSize.columns))
+            // Adjust existing lines to new column count
+            for i in 0..<lines.count {
+                if newSize.columns > oldCols {
+                    lines[i].cells.append(
+                        contentsOf: Array(repeating: .blank, count: newSize.columns - oldCols)
+                    )
+                } else if newSize.columns < oldCols {
+                    lines[i].cells = Array(lines[i].cells.prefix(newSize.columns))
+                }
             }
-        }
 
-        // Adjust row count
-        if newSize.rows > oldRows {
-            for _ in 0..<(newSize.rows - oldRows) {
-                lines.append(TerminalLine(columns: newSize.columns))
+            // Adjust row count
+            if newSize.rows > oldRows {
+                for _ in 0..<(newSize.rows - oldRows) {
+                    lines.append(TerminalLine(columns: newSize.columns))
+                }
+            } else if newSize.rows < oldRows {
+                let excess = oldRows - newSize.rows
+                let removed = Array(lines.prefix(excess))
+                scrollbackLines.append(contentsOf: removed)
+                lines.removeFirst(excess)
+                trimScrollback()
             }
-        } else if newSize.rows < oldRows {
-            let excess = oldRows - newSize.rows
-            let removed = Array(lines.prefix(excess))
-            scrollbackLines.append(contentsOf: removed)
-            lines.removeFirst(excess)
-            trimScrollback()
-        }
 
-        cursorRow = min(cursorRow, newSize.rows - 1)
-        cursorColumn = min(cursorColumn, newSize.columns - 1)
-        markDirty()
+            cursorRow = min(cursorRow, newSize.rows - 1)
+            cursorColumn = min(cursorColumn, newSize.columns - 1)
+            markAllRowsDirty()
+        }
     }
 
     // MARK: - Character Writing
 
     public func writeCharacter(_ char: Character, width: UInt8 = 1) {
-        lock.lock()
-        defer { lock.unlock() }
+        withLock {
+            if cursorColumn >= size.columns {
+                carriageReturn()
+                lineFeedInternal()
+            }
 
-        if cursorColumn >= size.columns {
-            carriageReturn()
-            lineFeed()
+            guard cursorRow >= 0 && cursorRow < lines.count else { return }
+
+            lines[cursorRow].cells[cursorColumn] = TerminalCell(
+                character: char,
+                width: width,
+                attributes: currentAttributes
+            )
+            cursorColumn += Int(width)
+            markRowDirty(cursorRow)
         }
-
-        guard cursorRow >= 0 && cursorRow < lines.count else { return }
-
-        lines[cursorRow].cells[cursorColumn] = TerminalCell(
-            character: char,
-            width: width,
-            attributes: currentAttributes
-        )
-        cursorColumn += Int(width)
-        markDirty()
     }
 
     // MARK: - Cursor Movement
 
     public func setCursorPosition(row: Int, column: Int) {
-        lock.lock()
-        defer { lock.unlock() }
-        cursorRow = max(0, min(row, size.rows - 1))
-        cursorColumn = max(0, min(column, size.columns - 1))
-        markDirty()
+        withLock {
+            let oldRow = cursorRow
+            cursorRow = max(0, min(row, size.rows - 1))
+            cursorColumn = max(0, min(column, size.columns - 1))
+            markRowDirty(oldRow)
+            markRowDirty(cursorRow)
+        }
     }
 
     public func moveCursorUp(_ n: Int = 1) {
-        lock.lock()
-        defer { lock.unlock() }
-        cursorRow = max(scrollTop, cursorRow - n)
-        markDirty()
+        withLock {
+            let oldRow = cursorRow
+            cursorRow = max(scrollTop, cursorRow - n)
+            markRowDirty(oldRow)
+            markRowDirty(cursorRow)
+        }
     }
 
     public func moveCursorDown(_ n: Int = 1) {
-        lock.lock()
-        defer { lock.unlock() }
-        cursorRow = min(scrollBottom, cursorRow + n)
-        markDirty()
+        withLock {
+            let oldRow = cursorRow
+            cursorRow = min(scrollBottom, cursorRow + n)
+            markRowDirty(oldRow)
+            markRowDirty(cursorRow)
+        }
     }
 
     public func moveCursorForward(_ n: Int = 1) {
-        lock.lock()
-        defer { lock.unlock() }
-        cursorColumn = min(size.columns - 1, cursorColumn + n)
-        markDirty()
+        withLock {
+            cursorColumn = min(size.columns - 1, cursorColumn + n)
+            markRowDirty(cursorRow)
+        }
     }
 
     public func moveCursorBackward(_ n: Int = 1) {
-        lock.lock()
-        defer { lock.unlock() }
-        cursorColumn = max(0, cursorColumn - n)
-        markDirty()
+        withLock {
+            cursorColumn = max(0, cursorColumn - n)
+            markRowDirty(cursorRow)
+        }
     }
 
     // MARK: - Line Operations
@@ -156,40 +206,58 @@ public final class TerminalBuffer: @unchecked Sendable {
     }
 
     public func lineFeed() {
+        withLock {
+            lineFeedInternal()
+        }
+    }
+
+    /// Internal lineFeed — must be called while lock is held
+    private func lineFeedInternal() {
         if cursorRow == scrollBottom {
             scrollUp()
+            // Scroll affects all rows in the scroll region
+            for row in scrollTop...scrollBottom {
+                markRowDirty(row)
+            }
         } else if cursorRow < size.rows - 1 {
+            markRowDirty(cursorRow)
             cursorRow += 1
+            markRowDirty(cursorRow)
         }
         markDirty()
     }
 
     public func reverseLineFeed() {
-        lock.lock()
-        defer { lock.unlock() }
-        if cursorRow == scrollTop {
-            scrollDown()
-        } else if cursorRow > 0 {
-            cursorRow -= 1
+        withLock {
+            if cursorRow == scrollTop {
+                scrollDown()
+                for row in scrollTop...scrollBottom {
+                    markRowDirty(row)
+                }
+            } else if cursorRow > 0 {
+                markRowDirty(cursorRow)
+                cursorRow -= 1
+                markRowDirty(cursorRow)
+            }
+            markDirty()
         }
-        markDirty()
     }
 
     public func tab() {
-        lock.lock()
-        defer { lock.unlock() }
-        let nextTab = ((cursorColumn / 8) + 1) * 8
-        cursorColumn = min(nextTab, size.columns - 1)
-        markDirty()
+        withLock {
+            let nextTab = ((cursorColumn / 8) + 1) * 8
+            cursorColumn = min(nextTab, size.columns - 1)
+            markRowDirty(cursorRow)
+        }
     }
 
     public func backspace() {
-        lock.lock()
-        defer { lock.unlock() }
-        if cursorColumn > 0 {
-            cursorColumn -= 1
+        withLock {
+            if cursorColumn > 0 {
+                cursorColumn -= 1
+            }
+            markRowDirty(cursorRow)
         }
-        markDirty()
     }
 
     // MARK: - Scrolling
@@ -222,46 +290,49 @@ public final class TerminalBuffer: @unchecked Sendable {
     // MARK: - Erase Operations
 
     public func eraseInDisplay(mode: Int) {
-        lock.lock()
-        defer { lock.unlock() }
-
-        switch mode {
-        case 0: // From cursor to end
-            eraseLine(from: cursorColumn, to: size.columns)
-            for i in (cursorRow + 1)..<size.rows {
-                lines[i] = TerminalLine(columns: size.columns)
+        withLock {
+            switch mode {
+            case 0: // From cursor to end
+                eraseLine(from: cursorColumn, to: size.columns)
+                for i in (cursorRow + 1)..<size.rows {
+                    lines[i] = TerminalLine(columns: size.columns)
+                    markRowDirty(i)
+                }
+                markRowDirty(cursorRow)
+            case 1: // From beginning to cursor
+                for i in 0..<cursorRow {
+                    lines[i] = TerminalLine(columns: size.columns)
+                    markRowDirty(i)
+                }
+                eraseLine(from: 0, to: cursorColumn + 1)
+                markRowDirty(cursorRow)
+            case 2: // Entire display
+                for i in 0..<size.rows {
+                    lines[i] = TerminalLine(columns: size.columns)
+                }
+                markAllRowsDirty()
+            case 3: // Entire display + scrollback
+                scrollbackLines.removeAll()
+                for i in 0..<size.rows {
+                    lines[i] = TerminalLine(columns: size.columns)
+                }
+                markAllRowsDirty()
+            default:
+                break
             }
-        case 1: // From beginning to cursor
-            for i in 0..<cursorRow {
-                lines[i] = TerminalLine(columns: size.columns)
-            }
-            eraseLine(from: 0, to: cursorColumn + 1)
-        case 2: // Entire display
-            for i in 0..<size.rows {
-                lines[i] = TerminalLine(columns: size.columns)
-            }
-        case 3: // Entire display + scrollback
-            scrollbackLines.removeAll()
-            for i in 0..<size.rows {
-                lines[i] = TerminalLine(columns: size.columns)
-            }
-        default:
-            break
         }
-        markDirty()
     }
 
     public func eraseInLine(mode: Int) {
-        lock.lock()
-        defer { lock.unlock() }
-
-        switch mode {
-        case 0: eraseLine(from: cursorColumn, to: size.columns)
-        case 1: eraseLine(from: 0, to: cursorColumn + 1)
-        case 2: eraseLine(from: 0, to: size.columns)
-        default: break
+        withLock {
+            switch mode {
+            case 0: eraseLine(from: cursorColumn, to: size.columns)
+            case 1: eraseLine(from: 0, to: cursorColumn + 1)
+            case 2: eraseLine(from: 0, to: size.columns)
+            default: break
+            }
+            markRowDirty(cursorRow)
         }
-        markDirty()
     }
 
     private func eraseLine(from start: Int, to end: Int) {
@@ -291,96 +362,111 @@ public final class TerminalBuffer: @unchecked Sendable {
     // MARK: - Scroll Region
 
     public func setScrollRegion(top: Int, bottom: Int) {
-        lock.lock()
-        defer { lock.unlock() }
-        scrollTop = max(0, top)
-        scrollBottom = min(bottom, size.rows - 1)
-        cursorRow = scrollTop
-        cursorColumn = 0
-        markDirty()
+        withLock {
+            scrollTop = max(0, top)
+            scrollBottom = min(bottom, size.rows - 1)
+            cursorRow = scrollTop
+            cursorColumn = 0
+            markAllRowsDirty()
+        }
     }
 
     // MARK: - Alternate Screen
 
     public func enableAlternateScreen() {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !alternateScreenActive else { return }
-        alternateScreenActive = true
-        savedPrimaryLines = lines
-        savedPrimaryCursor = (cursorRow, cursorColumn)
-        lines = (0..<size.rows).map { _ in TerminalLine(columns: size.columns) }
-        cursorRow = 0
-        cursorColumn = 0
-        markDirty()
+        withLock {
+            guard !alternateScreenActive else { return }
+            alternateScreenActive = true
+            savedPrimaryLines = lines
+            savedPrimaryCursor = (cursorRow, cursorColumn)
+            lines = (0..<size.rows).map { _ in TerminalLine(columns: size.columns) }
+            cursorRow = 0
+            cursorColumn = 0
+            markAllRowsDirty()
+        }
     }
 
     public func disableAlternateScreen() {
-        lock.lock()
-        defer { lock.unlock() }
-        guard alternateScreenActive else { return }
-        alternateScreenActive = false
-        lines = savedPrimaryLines
-        cursorRow = savedPrimaryCursor.row
-        cursorColumn = savedPrimaryCursor.col
-        savedPrimaryLines = []
-        markDirty()
+        withLock {
+            guard alternateScreenActive else { return }
+            alternateScreenActive = false
+            lines = savedPrimaryLines
+            cursorRow = savedPrimaryCursor.row
+            cursorColumn = savedPrimaryCursor.col
+            savedPrimaryLines = []
+            markAllRowsDirty()
+        }
     }
 
     // MARK: - Insert/Delete
 
     public func insertLines(_ n: Int) {
-        lock.lock()
-        defer { lock.unlock() }
-        for _ in 0..<n {
-            if cursorRow <= scrollBottom {
-                lines.remove(at: scrollBottom)
-                lines.insert(TerminalLine(columns: size.columns), at: cursorRow)
+        withLock {
+            for _ in 0..<n {
+                if cursorRow <= scrollBottom {
+                    lines.remove(at: scrollBottom)
+                    lines.insert(TerminalLine(columns: size.columns), at: cursorRow)
+                }
+            }
+            for row in cursorRow...scrollBottom {
+                markRowDirty(row)
             }
         }
-        markDirty()
     }
 
     public func deleteLines(_ n: Int) {
-        lock.lock()
-        defer { lock.unlock() }
-        for _ in 0..<n {
-            if cursorRow <= scrollBottom {
-                lines.remove(at: cursorRow)
-                lines.insert(TerminalLine(columns: size.columns), at: scrollBottom)
+        withLock {
+            for _ in 0..<n {
+                if cursorRow <= scrollBottom {
+                    lines.remove(at: cursorRow)
+                    lines.insert(TerminalLine(columns: size.columns), at: scrollBottom)
+                }
+            }
+            for row in cursorRow...scrollBottom {
+                markRowDirty(row)
             }
         }
-        markDirty()
     }
 
     public func deleteCharacters(_ n: Int) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard cursorRow < lines.count else { return }
-        let count = min(n, size.columns - cursorColumn)
-        lines[cursorRow].cells.removeSubrange(cursorColumn..<(cursorColumn + count))
-        lines[cursorRow].cells.append(
-            contentsOf: Array(repeating: TerminalCell.blank, count: count)
-        )
-        markDirty()
+        withLock {
+            guard cursorRow < lines.count else { return }
+            let count = min(n, size.columns - cursorColumn)
+            lines[cursorRow].cells.removeSubrange(cursorColumn..<(cursorColumn + count))
+            lines[cursorRow].cells.append(
+                contentsOf: Array(repeating: TerminalCell.blank, count: count)
+            )
+            markRowDirty(cursorRow)
+        }
     }
 
     public func insertCharacters(_ n: Int) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard cursorRow < lines.count else { return }
-        let count = min(n, size.columns - cursorColumn)
-        let blanks = Array(repeating: TerminalCell.blank, count: count)
-        lines[cursorRow].cells.insert(contentsOf: blanks, at: cursorColumn)
-        lines[cursorRow].cells = Array(lines[cursorRow].cells.prefix(size.columns))
-        markDirty()
+        withLock {
+            guard cursorRow < lines.count else { return }
+            let count = min(n, size.columns - cursorColumn)
+            let blanks = Array(repeating: TerminalCell.blank, count: count)
+            lines[cursorRow].cells.insert(contentsOf: blanks, at: cursorColumn)
+            lines[cursorRow].cells = Array(lines[cursorRow].cells.prefix(size.columns))
+            markRowDirty(cursorRow)
+        }
     }
 
     // MARK: - Snapshot (for rendering)
 
+    /// Standard snapshot — returns lines, cursor, and dirty region info.
+    /// Compatible with callers that only destructure (lines, cursorRow, cursorColumn).
     public func snapshot() -> (lines: [TerminalLine], cursorRow: Int, cursorColumn: Int) {
-        lock.lock()
-        defer { lock.unlock() }
-        return (lines, cursorRow, cursorColumn)
+        os_unfair_lock_lock(&unfairLock)
+        let result = (lines, cursorRow, cursorColumn)
+        os_unfair_lock_unlock(&unfairLock)
+        return result
+    }
+
+    /// Extended snapshot with dirty region tracking for optimized rendering.
+    public func dirtySnapshot() -> (lines: [TerminalLine], cursorRow: Int, cursorColumn: Int, dirtyRows: Set<Int>, fullRedraw: Bool) {
+        os_unfair_lock_lock(&unfairLock)
+        let result = (lines, cursorRow, cursorColumn, dirtyRows, fullRedrawNeeded)
+        os_unfair_lock_unlock(&unfairLock)
+        return result
     }
 }

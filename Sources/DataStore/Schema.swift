@@ -169,6 +169,20 @@ public final class SchemaManager: Sendable {
                 is_default INTEGER DEFAULT 0
             )
         """),
+
+        Migration(version: 2, sql: """
+            CREATE INDEX IF NOT EXISTS idx_embeddings_history_id
+                ON command_embeddings(command_history_id);
+
+            CREATE INDEX IF NOT EXISTS idx_ngrams_gram_context
+                ON command_ngrams(gram_size, context);
+
+            CREATE INDEX IF NOT EXISTS idx_history_command_dir
+                ON command_history(command, working_directory);
+
+            CREATE INDEX IF NOT EXISTS idx_feedback_predicted
+                ON prediction_feedback(predicted_command)
+        """),
     ]
 }
 

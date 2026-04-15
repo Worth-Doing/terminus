@@ -449,6 +449,12 @@ public final class EscapeSequenceParser: @unchecked Sendable {
             case 1049: // Alternate screen + save/restore cursor
                 if enabled { buffer.enableAlternateScreen() }
                 else { buffer.disableAlternateScreen() }
+            case 1000: // Mouse reporting — press only
+                buffer.mouseReportingMode = enabled ? .press : .none
+            case 1002: // Mouse reporting — press, release, drag
+                buffer.mouseReportingMode = enabled ? .pressRelease : .none
+            case 1003: // Mouse reporting — all motion
+                buffer.mouseReportingMode = enabled ? .motion : .none
             case 2004: // Bracketed paste mode
                 buffer.bracketedPasteMode = enabled
             default:
@@ -499,6 +505,7 @@ public final class EscapeSequenceParser: @unchecked Sendable {
         case 0, 2:
             // Window title
             windowTitle = value
+            onWindowTitleChanged?(value)
         case 1:
             // Icon title (usually same as window title)
             break
@@ -507,6 +514,21 @@ public final class EscapeSequenceParser: @unchecked Sendable {
             if let url = URL(string: value),
                url.scheme == "file" {
                 shellIntegration.handleEvent(.directoryChanged(path: url.path))
+            }
+        case 8:
+            // Hyperlink: OSC 8 ; params ; uri ST
+            // params;uri format — if uri is empty, end the hyperlink
+            let parts = value.split(separator: ";", maxSplits: 1)
+            if parts.count >= 2 {
+                let uri = String(parts[1])
+                var attrs = buffer.attributes
+                attrs.hyperlink = uri.isEmpty ? nil : uri
+                buffer.setAttributes(attrs)
+            } else {
+                // Empty URI — clear hyperlink
+                var attrs = buffer.attributes
+                attrs.hyperlink = nil
+                buffer.setAttributes(attrs)
             }
         case 133:
             // FinalTerm / Shell integration protocol
@@ -586,6 +608,9 @@ public final class EscapeSequenceParser: @unchecked Sendable {
 
     /// Window title set by OSC 0/2
     public private(set) var windowTitle: String?
+
+    /// Callback for window title changes
+    public var onWindowTitleChanged: ((String) -> Void)?
 
     // MARK: - DCS
 

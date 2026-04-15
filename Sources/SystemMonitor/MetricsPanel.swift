@@ -198,7 +198,6 @@ public struct MetricsPanel: View {
             .padding(12)
         }
         .frame(width: 240)
-        .background(theme.chromeBackground)
         .onAppear { monitor.start(interval: 1.5) }
         .onDisappear { monitor.stop() }
     }
@@ -242,12 +241,22 @@ struct MetricSection<Content: View>: View {
         }
         .padding(10)
         .background(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: TerminusDesign.radiusMD, style: .continuous)
                 .fill(theme.chromeHover)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(theme.chromeBorder, lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: TerminusDesign.radiusMD, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            theme.chromeBorder.opacity(0.8),
+                            theme.chromeBorder.opacity(0.3),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 0.5
+                )
         )
     }
 }

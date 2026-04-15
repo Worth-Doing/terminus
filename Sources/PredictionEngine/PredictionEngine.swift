@@ -47,6 +47,24 @@ public final class PredictionEngine: @unchecked Sendable {
 
         let maxFreq = frequencyMap.values.max() ?? 1
 
+        // Pre-fetch n-gram predictions for context scoring
+        let ngramPredictions: [(prediction: String, count: Int)]
+        if let prev = previousCommand {
+            ngramPredictions = (try? history.queryNgrams(context: prev)) ?? []
+        } else {
+            ngramPredictions = []
+        }
+        let ngramMap = Dictionary(ngramPredictions.map { ($0.prediction, $0.count) }, uniquingKeysWith: { a, _ in a })
+        let maxNgramCount = ngramPredictions.map(\.count).max() ?? 1
+
+        // Pre-fetch project type commands for batch scoring
+        let projectCommands: Set<String>
+        if let pt = projectType {
+            projectCommands = Set((try? history.commandsInProjectType(pt)) ?? [])
+        } else {
+            projectCommands = []
+        }
+
         for candidate in candidates {
             let freqScore = frequencyScore(
                 count: frequencyMap[candidate] ?? 0,
@@ -54,17 +72,27 @@ public final class PredictionEngine: @unchecked Sendable {
             )
             let prefixScore = prefixMatchScore(candidate: candidate, prefix: prefix)
             let dirScore = directoryScore(candidate: candidate, directory: currentDirectory)
+            let recScore = recencyScore(candidate: candidate)
+            let projScore = projectTypeScore(candidate: candidate, projectCommands: projectCommands)
+            let nScore = ngramScore(candidate: candidate, ngramMap: ngramMap, maxCount: maxNgramCount)
 
             let totalScore =
                 weights.frequency * freqScore +
                 weights.prefix * prefixScore +
-                weights.directory * dirScore
+                weights.directory * dirScore +
+                weights.recency * recScore +
+                weights.projectType * projScore +
+                weights.ngram * nScore
 
             if totalScore > 0.1 {
                 predictions.append(Prediction(
                     command: candidate,
                     score: totalScore,
-                    source: .frequencyHistory
+                    source: determinePredictionSource(
+                        freqScore: freqScore,
+                        ngramScore: nScore,
+                        dirScore: dirScore
+                    )
                 ))
             }
         }
@@ -88,14 +116,55 @@ public final class PredictionEngine: @unchecked Sendable {
     }
 
     private func directoryScore(candidate: String, directory: String) -> Double {
-        // Simplified: would check history for directory-specific frequency
-        return 0.5
+        let freq = (try? history.commandFrequencyInDirectory(command: candidate, directory: directory)) ?? 0
+        if freq > 0 {
+            return min(1.0, log2(Double(freq + 1)) / log2(10.0))
+        }
+
+        // Check parent directory as fallback
+        let parentDir = (directory as NSString).deletingLastPathComponent
+        let parentFreq = (try? history.commandFrequencyInDirectory(command: candidate, directory: parentDir)) ?? 0
+        if parentFreq > 0 {
+            return 0.3
+        }
+
+        return 0.0
+    }
+
+    private func recencyScore(candidate: String) -> Double {
+        guard let lastUsed = try? history.mostRecentExecution(command: candidate) else {
+            return 0.0
+        }
+        let hoursAgo = Date().timeIntervalSince(lastUsed) / 3600.0
+        // Decay over 1 week (168 hours)
+        return max(0.0, 1.0 - hoursAgo / 168.0)
+    }
+
+    private func projectTypeScore(candidate: String, projectCommands: Set<String>) -> Double {
+        guard !projectCommands.isEmpty else { return 0.0 }
+        return projectCommands.contains(candidate) ? 1.0 : 0.0
+    }
+
+    private func ngramScore(candidate: String, ngramMap: [String: Int], maxCount: Int) -> Double {
+        guard let count = ngramMap[candidate], maxCount > 0 else { return 0.0 }
+        return min(1.0, Double(count) / Double(maxCount))
+    }
+
+    private func determinePredictionSource(freqScore: Double, ngramScore: Double, dirScore: Double) -> PredictionSource {
+        if ngramScore > 0.5 { return .ngramSequence }
+        if dirScore > 0.5 { return .directoryContext }
+        return .frequencyHistory
     }
 
     // MARK: - Feedback
 
     public func recordFeedback(prediction: String, accepted: Bool, context: PredictionContext) {
-        // Store feedback for adaptive weighting
+        try? history.recordPredictionFeedback(
+            predicted: prediction,
+            accepted: accepted,
+            directory: context.currentDirectory,
+            previousCommand: context.previousCommand
+        )
     }
 }
 

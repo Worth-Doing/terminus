@@ -57,6 +57,7 @@ public struct CellAttributes: Sendable, Equatable, Hashable, Codable {
     public var hidden: Bool
     public var blink: Bool
     public var faint: Bool
+    public var hyperlink: String?
 
     public init(
         foreground: TerminalColor = .default,
@@ -68,7 +69,8 @@ public struct CellAttributes: Sendable, Equatable, Hashable, Codable {
         inverse: Bool = false,
         hidden: Bool = false,
         blink: Bool = false,
-        faint: Bool = false
+        faint: Bool = false,
+        hyperlink: String? = nil
     ) {
         self.foreground = foreground
         self.background = background
@@ -80,6 +82,7 @@ public struct CellAttributes: Sendable, Equatable, Hashable, Codable {
         self.hidden = hidden
         self.blink = blink
         self.faint = faint
+        self.hyperlink = hyperlink
     }
 
     public static let `default` = CellAttributes()

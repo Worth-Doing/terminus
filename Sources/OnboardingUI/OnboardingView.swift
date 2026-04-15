@@ -36,14 +36,23 @@ public struct OnboardingView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            // Progress indicator
+            // Progress indicator with gradient
             HStack(spacing: TerminusDesign.spacingSM) {
                 ForEach(OnboardingStep.allCases, id: \.rawValue) { step in
                     Capsule()
                         .fill(step.rawValue <= currentStep.rawValue
-                              ? TerminusAccent.primary
-                              : theme.chromeDivider)
+                              ? LinearGradient(
+                                    colors: [TerminusAccent.primary, TerminusAccent.primary.opacity(0.7)],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                              : LinearGradient(
+                                    colors: [theme.chromeDivider],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                ))
                         .frame(height: 3)
+                        .animation(TerminusDesign.springDefault, value: currentStep)
                 }
             }
             .padding(.horizontal, TerminusDesign.spacingXL)
@@ -64,7 +73,10 @@ public struct OnboardingView: View {
                     readyContent
                 }
             }
-            .transition(.opacity.combined(with: .move(edge: .trailing)))
+            .transition(.asymmetric(
+                insertion: .move(edge: .trailing).combined(with: .opacity),
+                removal: .move(edge: .leading).combined(with: .opacity)
+            ))
 
             Spacer()
 
@@ -72,7 +84,7 @@ public struct OnboardingView: View {
             HStack {
                 if currentStep != .welcome {
                     Button("Back") {
-                        withAnimation(.easeInOut(duration: TerminusDesign.animationNormal)) {
+                        withAnimation(TerminusDesign.springDefault) {
                             if let prev = OnboardingStep(rawValue: currentStep.rawValue - 1) {
                                 currentStep = prev
                             }
@@ -94,7 +106,7 @@ public struct OnboardingView: View {
             .padding(TerminusDesign.spacingXL)
         }
         .frame(width: 600, height: 450)
-        .background(theme.chromeBackground)
+        .glassBackground(isDark: theme.isDark)
     }
 
     // MARK: - Content Views
@@ -160,7 +172,7 @@ public struct OnboardingView: View {
             }
 
             Button("Skip for now") {
-                withAnimation(.easeInOut(duration: TerminusDesign.animationNormal)) {
+                withAnimation(TerminusDesign.springDefault) {
                     currentStep = .ready
                 }
             }
@@ -204,10 +216,12 @@ public struct OnboardingView: View {
                     .foregroundStyle(theme.chromeTextSecondary)
             }
         }
+        .padding(TerminusDesign.spacingMD)
+        .glassPanel(cornerRadius: TerminusDesign.radiusMD, shadow: .soft, isDark: theme.isDark)
     }
 
     private func handleNext() {
-        withAnimation(.easeInOut(duration: TerminusDesign.animationNormal)) {
+        withAnimation(TerminusDesign.springDefault) {
             switch currentStep {
             case .welcome, .features:
                 if let next = OnboardingStep(rawValue: currentStep.rawValue + 1) {

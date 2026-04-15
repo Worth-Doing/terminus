@@ -11,7 +11,7 @@ public enum SplitDirection: String, Sendable, Codable {
 
 // MARK: - Panel Node
 
-public indirect enum PanelNode: Identifiable, Sendable {
+public indirect enum PanelNode: Identifiable, Sendable, Codable {
     case leaf(PanelLeaf)
     case split(PanelSplit)
 
@@ -21,9 +21,38 @@ public indirect enum PanelNode: Identifiable, Sendable {
         case .split(let split): split.id
         }
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case type, leaf, split
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .leaf(let leaf):
+            try container.encode("leaf", forKey: .type)
+            try container.encode(leaf, forKey: .leaf)
+        case .split(let split):
+            try container.encode("split", forKey: .type)
+            try container.encode(split, forKey: .split)
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let type = try container.decode(String.self, forKey: .type)
+        switch type {
+        case "leaf":
+            self = .leaf(try container.decode(PanelLeaf.self, forKey: .leaf))
+        case "split":
+            self = .split(try container.decode(PanelSplit.self, forKey: .split))
+        default:
+            throw DecodingError.dataCorruptedError(forKey: .type, in: container, debugDescription: "Unknown PanelNode type: \(type)")
+        }
+    }
 }
 
-public struct PanelLeaf: Identifiable, Sendable {
+public struct PanelLeaf: Identifiable, Sendable, Codable {
     public let id: PanelID
     public var sessionID: SessionID
 
@@ -33,7 +62,7 @@ public struct PanelLeaf: Identifiable, Sendable {
     }
 }
 
-public struct PanelSplit: Identifiable, Sendable {
+public struct PanelSplit: Identifiable, Sendable, Codable {
     public let id: PanelID
     public var direction: SplitDirection
     public var ratio: CGFloat

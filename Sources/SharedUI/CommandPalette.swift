@@ -164,15 +164,7 @@ public struct CommandPaletteView: View {
             .padding(.vertical, 6)
         }
         .frame(width: 520)
-        .background(
-            RoundedRectangle(cornerRadius: TerminusDesign.radiusLG)
-                .fill(theme.chromeBackground)
-                .shadow(color: .black.opacity(theme.isDark ? 0.5 : 0.2), radius: 20, y: 8)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: TerminusDesign.radiusLG)
-                .stroke(theme.chromeBorder, lineWidth: 1)
-        )
+        .clipShape(RoundedRectangle(cornerRadius: TerminusDesign.radiusXL, style: .continuous))
         .onAppear {
             isSearchFocused = true
             selectedIndex = 0

@@ -147,7 +147,6 @@ public struct SavedCommandsSidebar: View {
             }
         }
         .frame(width: TerminusDesign.sidebarWidth)
-        .background(theme.chromeBackground)
     }
 }
 
