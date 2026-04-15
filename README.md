@@ -18,8 +18,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Worth-Doing/terminus/releases/latest">
-    <img src="https://img.shields.io/badge/Download-DMG-blue?style=for-the-badge&logo=apple" alt="Download DMG" />
+  <a href="https://github.com/Worth-Doing/terminus/releases/latest/download/Terminus-0.1.0.zip">
+    <img src="https://img.shields.io/badge/Download-Terminus%200.1.0-blue?style=for-the-badge&logo=apple" alt="Download Terminus" />
   </a>
 </p>
 
@@ -35,9 +35,11 @@
 
 ## Download
 
-**[Download Terminus-0.1.0.zip](https://github.com/Worth-Doing/terminus/releases/latest)**
+**[Download Terminus-0.1.0.zip](https://github.com/Worth-Doing/terminus/releases/latest/download/Terminus-0.1.0.zip)**
 
 > Signed and notarized by Apple. Runs on macOS 14+ (Sonoma and later), Apple Silicon & Intel.
+>
+> Unzip and drag `Terminus.app` to Applications.
 
 ---
 
