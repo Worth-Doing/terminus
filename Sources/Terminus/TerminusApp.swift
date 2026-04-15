@@ -22,7 +22,8 @@ import SystemMonitor
 @Observable
 final class AppState {
     var hasCompletedOnboarding: Bool
-    var theme: TerminusTheme = .defaultDark
+    var theme: TerminusTheme
+    var settings: UserSettings
     var controllers: [SessionID: TerminalSessionController] = [:]
 
     let windowState = WindowState()
@@ -48,6 +49,21 @@ final class AppState {
 
     init() {
         self.hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
+
+        // Load persisted settings
+        let savedThemeID = UserDefaults.standard.string(forKey: "terminus.themeID") ?? "defaultLight"
+        self.theme = TerminusTheme.theme(withID: savedThemeID)
+        self.settings = UserSettings()
+        self.settings.theme = savedThemeID
+
+        if let savedFontSize = UserDefaults.standard.object(forKey: "terminus.fontSize") as? Double {
+            self.settings.fontSize = savedFontSize
+            self.theme.fontSize = CGFloat(savedFontSize)
+        }
+        if let savedFontFamily = UserDefaults.standard.string(forKey: "terminus.fontFamily") {
+            self.settings.fontFamily = savedFontFamily
+            self.theme.fontFamily = savedFontFamily
+        }
 
         // Initialize database and services
         do {
@@ -87,6 +103,33 @@ final class AppState {
         UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
     }
 
+    // MARK: - Theme Management
+
+    func applyTheme(_ themeID: String) {
+        theme = TerminusTheme.theme(withID: themeID)
+        // Preserve user font settings
+        if let fontFamily = settings.fontFamily {
+            theme.fontFamily = fontFamily
+        }
+        theme.fontSize = CGFloat(settings.fontSize)
+        settings.theme = themeID
+        UserDefaults.standard.set(themeID, forKey: "terminus.themeID")
+    }
+
+    func applyFontSize(_ size: Double) {
+        settings.fontSize = size
+        theme.fontSize = CGFloat(size)
+        UserDefaults.standard.set(size, forKey: "terminus.fontSize")
+    }
+
+    func applyFontFamily(_ family: String) {
+        settings.fontFamily = family
+        theme.fontFamily = family
+        UserDefaults.standard.set(family, forKey: "terminus.fontFamily")
+    }
+
+    // MARK: - Session Management
+
     func controllerForSession(_ sessionID: SessionID) -> TerminalSessionController {
         if let existing = controllers[sessionID] {
             return existing
@@ -120,14 +163,7 @@ final class AppState {
                 gitBranch: gitBranch
             )
 
-            // Record to history
             try? historyEngine.record(entry)
-
-            // Record n-gram if we have a previous command
-            if let prevController = self.controllers[sessionID],
-               let _ = prevController.currentCommand {
-                // N-gram will be recorded on next command
-            }
         }
 
         controllers[sessionID] = controller
@@ -143,7 +179,6 @@ final class AppState {
         let index = windowState.activeTabIndex
         let tab = windowState.tabs[index]
 
-        // Clean up controllers for this workspace
         if let ws = workspaces[tab.workspaceID] {
             for sessionID in ws.allSessionIDs {
                 if let controller = controllers[sessionID] {
@@ -166,12 +201,10 @@ final class AppState {
     func closeFocusedPanel() {
         let ws = activeWorkspace
         if ws.panelCount > 1 {
-            // Find the session to clean up
             if let leaf = findLeaf(ws.focusedPanelID, in: ws.root) {
                 let sessionID = leaf.sessionID
                 ws.closePanel(ws.focusedPanelID)
 
-                // Clean up controller if session is no longer referenced
                 let allSessions = ws.allSessionIDs
                 if !allSessions.contains(sessionID) {
                     if let controller = controllers[sessionID] {
@@ -210,7 +243,6 @@ final class AppState {
     }
 
     func insertSavedCommand(_ command: SavedCommand) {
-        // Resolve template and send to focused terminal
         let ws = activeWorkspace
         let leaves = ws.allLeaves(in: ws.root)
         guard let focused = leaves.first(where: { $0.id == ws.focusedPanelID }),
@@ -227,7 +259,6 @@ final class AppState {
     func buildPaletteItems() -> [CommandPaletteItem] {
         var items: [CommandPaletteItem] = []
 
-        // Actions
         items.append(CommandPaletteItem(
             title: "Split Horizontally", icon: "rectangle.split.1x2", category: .action,
             action: { [weak self] in self?.splitFocused(direction: .horizontal) }
@@ -256,6 +287,16 @@ final class AppState {
             title: "Save Current Command", icon: "bookmark.fill", category: .action,
             action: { [weak self] in self?.showSaveCommandSheet = true }
         ))
+
+        // Theme switching
+        for t in TerminusTheme.allThemes {
+            items.append(CommandPaletteItem(
+                title: "Theme: \(t.name)",
+                icon: t.isDark ? "moon.fill" : "sun.max.fill",
+                category: .setting,
+                action: { [weak self] in self?.applyTheme(t.id) }
+            ))
+        }
 
         // Saved commands
         for cmd in savedCommands {
@@ -301,12 +342,15 @@ struct TerminusApp: App {
                 if appState.hasCompletedOnboarding {
                     MainView(appState: appState)
                 } else {
-                    OnboardingView(secureStorage: appState.secureStorage) {
+                    OnboardingView(
+                        secureStorage: appState.secureStorage,
+                        theme: appState.theme
+                    ) {
                         appState.completeOnboarding()
                     }
                 }
             }
-            .preferredColorScheme(.dark)
+            .preferredColorScheme(appState.theme.isDark ? .dark : .light)
         }
         .windowStyle(.titleBar)
         .defaultSize(width: 1200, height: 800)
@@ -315,7 +359,15 @@ struct TerminusApp: App {
         }
 
         Settings {
-            SettingsView(secureStorage: appState.secureStorage)
+            SettingsView(
+                secureStorage: appState.secureStorage,
+                currentThemeID: appState.settings.theme,
+                currentFontSize: appState.settings.fontSize,
+                currentFontFamily: appState.settings.fontFamily ?? "SF Mono",
+                onThemeChanged: { appState.applyTheme($0) },
+                onFontSizeChanged: { appState.applyFontSize($0) },
+                onFontFamilyChanged: { appState.applyFontFamily($0) }
+            )
         }
     }
 }
@@ -415,6 +467,8 @@ struct TerminusCommands: Commands {
 struct MainView: View {
     @Bindable var appState: AppState
 
+    private var theme: TerminusTheme { appState.theme }
+
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
@@ -422,31 +476,31 @@ struct MainView: View {
                 if appState.windowState.tabs.count > 1 {
                     TabBarView(appState: appState)
                         .frame(height: 32)
-                        .background(TerminusColors.toolbarBackground)
+                        .background(theme.chromeBackground)
 
                     Rectangle()
-                        .fill(TerminusColors.divider)
+                        .fill(theme.chromeDivider)
                         .frame(height: 1)
                 }
 
                 // Toolbar
                 TerminusToolbar(appState: appState)
                     .frame(height: 38)
-                    .background(TerminusColors.toolbarBackground)
+                    .background(theme.chromeBackground)
 
                 Rectangle()
-                    .fill(TerminusColors.divider)
+                    .fill(theme.chromeDivider)
                     .frame(height: 1)
 
-                // Main content area: metrics + panels + sidebar
+                // Main content area
                 HStack(spacing: 0) {
                     // System metrics panel (left)
                     if appState.showMetrics {
-                        MetricsPanel()
+                        MetricsPanel(theme: theme)
                             .transition(.move(edge: .leading).combined(with: .opacity))
 
                         Rectangle()
-                            .fill(TerminusColors.divider)
+                            .fill(theme.chromeDivider)
                             .frame(width: 1)
                     }
 
@@ -459,11 +513,12 @@ struct MainView: View {
                     // Saved commands sidebar (right)
                     if appState.showSidebar {
                         Rectangle()
-                            .fill(TerminusColors.divider)
+                            .fill(theme.chromeDivider)
                             .frame(width: 1)
 
                         SavedCommandsSidebar(
                             commands: appState.savedCommands,
+                            theme: theme,
                             onSelect: { appState.insertSavedCommand($0) },
                             onDelete: { appState.deleteSavedCommand($0) },
                             onAdd: { appState.showSaveCommandSheet = true }
@@ -472,18 +527,19 @@ struct MainView: View {
                     }
                 }
             }
-            .background(appState.theme.backgroundColor)
+            .background(theme.backgroundColor)
 
             // Command palette overlay
             if appState.showCommandPalette {
-                Color.black.opacity(0.3)
+                theme.chromeOverlay
                     .ignoresSafeArea()
                     .onTapGesture { appState.showCommandPalette = false }
 
                 VStack {
                     CommandPaletteView(
                         isPresented: $appState.showCommandPalette,
-                        items: appState.buildPaletteItems()
+                        items: appState.buildPaletteItems(),
+                        theme: theme
                     )
                     .padding(.top, 80)
 
@@ -494,7 +550,7 @@ struct MainView: View {
 
             // Semantic search overlay
             if appState.showSemanticSearch {
-                Color.black.opacity(0.3)
+                theme.chromeOverlay
                     .ignoresSafeArea()
                     .onTapGesture { appState.showSemanticSearch = false }
 
@@ -503,6 +559,7 @@ struct MainView: View {
                         isPresented: $appState.showSemanticSearch,
                         query: $appState.semanticSearchQuery,
                         results: appState.semanticSearchResults,
+                        theme: theme,
                         onSearch: { query in
                             Task {
                                 await performSemanticSearch(query)
@@ -528,6 +585,7 @@ struct MainView: View {
             SaveCommandSheet(
                 isPresented: $appState.showSaveCommandSheet,
                 initialCommand: "",
+                theme: theme,
                 onSave: { appState.saveCommand($0) }
             )
         }
@@ -543,7 +601,6 @@ struct MainView: View {
             let results = try await pipeline.search(query: query, limit: 15)
             appState.semanticSearchResults = results.map { ($0.matchedText, $0.similarity) }
         } catch {
-            // If AI is not configured, fall back to history search
             if let history = appState.historyEngine {
                 let entries = (try? history.search(query: query, limit: 15)) ?? []
                 appState.semanticSearchResults = entries.map { ($0.command, 1.0) }
@@ -570,6 +627,7 @@ struct SemanticSearchOverlay: View {
     @Binding var isPresented: Bool
     @Binding var query: String
     let results: [(String, Float)]
+    let theme: TerminusTheme
     let onSearch: (String) -> Void
     let onSelect: (String) -> Void
 
@@ -582,12 +640,12 @@ struct SemanticSearchOverlay: View {
             HStack(spacing: TerminusDesign.spacingSM) {
                 Image(systemName: "sparkle.magnifyingglass")
                     .font(.system(size: 14))
-                    .foregroundStyle(TerminusColors.accentPrimary)
+                    .foregroundStyle(TerminusAccent.primary)
 
                 TextField("Search commands semantically...", text: $query)
                     .textFieldStyle(.plain)
                     .font(.terminusUI(size: 15))
-                    .foregroundStyle(TerminusColors.textPrimary)
+                    .foregroundStyle(theme.chromeText)
                     .focused($isFocused)
                     .onSubmit {
                         if selectedIndex < results.count {
@@ -602,15 +660,14 @@ struct SemanticSearchOverlay: View {
             .padding(.horizontal, TerminusDesign.spacingMD)
             .padding(.vertical, TerminusDesign.spacingMD)
 
-            Divider().background(TerminusColors.divider)
+            Divider().background(theme.chromeDivider)
 
-            // Results
             if results.isEmpty && !query.isEmpty {
                 VStack {
                     Spacer()
                     Text("No results")
                         .font(.terminusUI(size: 14))
-                        .foregroundStyle(TerminusColors.textTertiary)
+                        .foregroundStyle(theme.chromeTextTertiary)
                     Spacer()
                 }
                 .frame(height: 100)
@@ -621,26 +678,25 @@ struct SemanticSearchOverlay: View {
                             HStack {
                                 Text(result.0)
                                     .font(.terminusMono(size: 13))
-                                    .foregroundStyle(TerminusColors.textPrimary)
+                                    .foregroundStyle(theme.chromeText)
                                     .lineLimit(2)
 
                                 Spacer()
 
-                                // Similarity badge
                                 Text("\(Int(result.1 * 100))%")
                                     .font(.terminusUI(size: 10, weight: .medium))
-                                    .foregroundStyle(TerminusColors.textTertiary)
+                                    .foregroundStyle(theme.chromeTextTertiary)
                                     .padding(.horizontal, 5)
                                     .padding(.vertical, 2)
                                     .background(
-                                        Capsule().fill(Color.white.opacity(0.06))
+                                        Capsule().fill(theme.chromeHover)
                                     )
                             }
                             .padding(.horizontal, TerminusDesign.spacingMD)
                             .padding(.vertical, 6)
                             .background(
                                 index == selectedIndex
-                                    ? TerminusColors.accentPrimary.opacity(0.15)
+                                    ? TerminusAccent.primary.opacity(0.15)
                                     : Color.clear
                             )
                             .contentShape(Rectangle())
@@ -652,12 +708,12 @@ struct SemanticSearchOverlay: View {
                 .frame(maxHeight: 300)
             }
 
-            Divider().background(TerminusColors.divider)
+            Divider().background(theme.chromeDivider)
 
             HStack(spacing: TerminusDesign.spacingMD) {
                 Text("Powered by OpenRouter embeddings")
                     .font(.terminusUI(size: 10))
-                    .foregroundStyle(TerminusColors.textTertiary)
+                    .foregroundStyle(theme.chromeTextTertiary)
                 Spacer()
                 keyHint("Esc", label: "close")
             }
@@ -667,12 +723,12 @@ struct SemanticSearchOverlay: View {
         .frame(width: 550)
         .background(
             RoundedRectangle(cornerRadius: TerminusDesign.radiusLG)
-                .fill(TerminusColors.sidebarBackground)
-                .shadow(color: .black.opacity(0.5), radius: 20, y: 8)
+                .fill(theme.chromeBackground)
+                .shadow(color: .black.opacity(theme.isDark ? 0.5 : 0.2), radius: 20, y: 8)
         )
         .overlay(
             RoundedRectangle(cornerRadius: TerminusDesign.radiusLG)
-                .stroke(TerminusColors.panelBorder, lineWidth: 1)
+                .stroke(theme.chromeBorder, lineWidth: 1)
         )
         .onAppear { isFocused = true }
         .onKeyPress(.escape) {
@@ -693,13 +749,13 @@ struct SemanticSearchOverlay: View {
         HStack(spacing: 3) {
             Text(key)
                 .font(.terminusUI(size: 10, weight: .medium))
-                .foregroundStyle(TerminusColors.textTertiary)
+                .foregroundStyle(theme.chromeTextTertiary)
                 .padding(.horizontal, 4)
                 .padding(.vertical, 1)
-                .background(RoundedRectangle(cornerRadius: 3).fill(Color.white.opacity(0.06)))
+                .background(RoundedRectangle(cornerRadius: 3).fill(theme.chromeHover))
             Text(label)
                 .font(.terminusUI(size: 10))
-                .foregroundStyle(TerminusColors.textTertiary)
+                .foregroundStyle(theme.chromeTextTertiary)
         }
     }
 }
@@ -709,12 +765,15 @@ struct SemanticSearchOverlay: View {
 struct TabBarView: View {
     @Bindable var appState: AppState
 
+    private var theme: TerminusTheme { appState.theme }
+
     var body: some View {
         HStack(spacing: 0) {
             ForEach(Array(appState.windowState.tabs.enumerated()), id: \.element.id) { index, tab in
                 TabItemView(
                     title: tab.title,
                     isActive: index == appState.windowState.activeTabIndex,
+                    theme: theme,
                     onSelect: { appState.windowState.selectTab(at: index) },
                     onClose: {
                         if appState.windowState.tabs.count > 1 {
@@ -725,16 +784,15 @@ struct TabBarView: View {
 
                 if index < appState.windowState.tabs.count - 1 {
                     Rectangle()
-                        .fill(TerminusColors.divider)
+                        .fill(theme.chromeDivider)
                         .frame(width: 1)
                 }
             }
 
-            // Add tab button
             Button(action: { appState.addTab() }) {
                 Image(systemName: "plus")
                     .font(.system(size: 11))
-                    .foregroundStyle(TerminusColors.textTertiary)
+                    .foregroundStyle(theme.chromeTextTertiary)
             }
             .buttonStyle(.plain)
             .padding(.horizontal, TerminusDesign.spacingSM)
@@ -748,6 +806,7 @@ struct TabBarView: View {
 struct TabItemView: View {
     let title: String
     let isActive: Bool
+    let theme: TerminusTheme
     let onSelect: () -> Void
     let onClose: () -> Void
 
@@ -757,25 +816,21 @@ struct TabItemView: View {
         HStack(spacing: TerminusDesign.spacingXS) {
             Text(title)
                 .font(.terminusUI(size: 12, weight: isActive ? .medium : .regular))
-                .foregroundStyle(isActive ? TerminusColors.textPrimary : TerminusColors.textSecondary)
+                .foregroundStyle(isActive ? theme.chromeText : theme.chromeTextSecondary)
                 .lineLimit(1)
 
             if isHovering || isActive {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(TerminusColors.textTertiary)
+                        .foregroundStyle(theme.chromeTextTertiary)
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, TerminusDesign.spacingMD)
         .padding(.vertical, TerminusDesign.spacingXS)
-        .background(
-            isActive
-                ? TerminusColors.sidebarBackground.opacity(0.8)
-                : Color.clear
-        )
+        .background(isActive ? theme.chromeHover : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: TerminusDesign.radiusSM))
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
@@ -827,6 +882,7 @@ struct SplitPanelView: View {
 
                     SplitDivider(
                         isHorizontal: true,
+                        theme: appState.theme,
                         onDrag: { delta in
                             let newRatio = ratio + delta / geometry.size.width
                             appState.activeWorkspace.updateSplitRatio(split.id, ratio: newRatio)
@@ -845,6 +901,7 @@ struct SplitPanelView: View {
 
                     SplitDivider(
                         isHorizontal: false,
+                        theme: appState.theme,
                         onDrag: { delta in
                             let newRatio = ratio + delta / geometry.size.height
                             appState.activeWorkspace.updateSplitRatio(split.id, ratio: newRatio)
@@ -865,6 +922,7 @@ struct SplitPanelView: View {
 
 struct SplitDivider: View {
     let isHorizontal: Bool
+    let theme: TerminusTheme
     let onDrag: (CGFloat) -> Void
     let onDoubleTap: () -> Void
 
@@ -872,7 +930,7 @@ struct SplitDivider: View {
 
     var body: some View {
         Rectangle()
-            .fill(isDragging ? TerminusColors.accentPrimary.opacity(0.5) : TerminusColors.divider)
+            .fill(isDragging ? TerminusAccent.primary.opacity(0.5) : theme.chromeDivider)
             .frame(
                 width: isHorizontal ? 2 : nil,
                 height: isHorizontal ? nil : 2
@@ -916,15 +974,16 @@ struct SplitDivider: View {
 struct TerminusToolbar: View {
     @Bindable var appState: AppState
 
+    private var theme: TerminusTheme { appState.theme }
+
     var body: some View {
         HStack(spacing: TerminusDesign.spacingMD) {
-            // Split buttons
             Button(action: { appState.splitFocused(direction: .horizontal) }) {
                 Image(systemName: "rectangle.split.1x2")
                     .font(.system(size: 13))
             }
             .buttonStyle(.plain)
-            .foregroundStyle(TerminusColors.textSecondary)
+            .foregroundStyle(theme.chromeTextSecondary)
             .help("Split Horizontally (Cmd+D)")
 
             Button(action: { appState.splitFocused(direction: .vertical) }) {
@@ -932,7 +991,7 @@ struct TerminusToolbar: View {
                     .font(.system(size: 13))
             }
             .buttonStyle(.plain)
-            .foregroundStyle(TerminusColors.textSecondary)
+            .foregroundStyle(theme.chromeTextSecondary)
             .help("Split Vertically (Cmd+Shift+D)")
 
             Divider()
@@ -943,28 +1002,26 @@ struct TerminusToolbar: View {
                     .font(.system(size: 13))
             }
             .buttonStyle(.plain)
-            .foregroundStyle(TerminusColors.textSecondary)
+            .foregroundStyle(theme.chromeTextSecondary)
             .help("Close Panel (Cmd+W)")
 
             Spacer()
 
-            // Panel indicator
             let count = appState.activeWorkspace.panelCount
             if count > 1 {
                 Text("\(count) panels")
                     .font(.terminusUI(size: 11))
-                    .foregroundStyle(TerminusColors.textTertiary)
+                    .foregroundStyle(theme.chromeTextTertiary)
             }
 
             Spacer()
 
-            // Command palette
             Button(action: { appState.showCommandPalette.toggle() }) {
                 Image(systemName: "command")
                     .font(.system(size: 13))
             }
             .buttonStyle(.plain)
-            .foregroundStyle(TerminusColors.textSecondary)
+            .foregroundStyle(theme.chromeTextSecondary)
             .help("Command Palette (Cmd+Shift+P)")
 
             Button(action: { appState.showSemanticSearch.toggle() }) {
@@ -972,7 +1029,7 @@ struct TerminusToolbar: View {
                     .font(.system(size: 13))
             }
             .buttonStyle(.plain)
-            .foregroundStyle(TerminusColors.textSecondary)
+            .foregroundStyle(theme.chromeTextSecondary)
             .help("Search (Cmd+Shift+F)")
 
             Button(action: { appState.showMetrics.toggle() }) {
@@ -981,7 +1038,7 @@ struct TerminusToolbar: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(
-                appState.showMetrics ? TerminusColors.accentPrimary : TerminusColors.textSecondary
+                appState.showMetrics ? TerminusAccent.primary : theme.chromeTextSecondary
             )
             .help("System Monitor (Cmd+Shift+M)")
 
@@ -991,7 +1048,7 @@ struct TerminusToolbar: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(
-                appState.showSidebar ? TerminusColors.accentPrimary : TerminusColors.textSecondary
+                appState.showSidebar ? TerminusAccent.primary : theme.chromeTextSecondary
             )
             .help("Saved Commands (Cmd+B)")
         }

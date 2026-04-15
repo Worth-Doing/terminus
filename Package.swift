@@ -126,7 +126,7 @@ let package = Package(
         // ── System Monitor ──────────────────────────────────────────
         .target(
             name: "SystemMonitor",
-            dependencies: ["SharedModels"],
+            dependencies: ["SharedModels", "SharedUI"],
             swiftSettings: [.swiftLanguageMode(.v6)],
             linkerSettings: [
                 .linkedFramework("IOKit"),

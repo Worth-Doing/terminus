@@ -13,7 +13,7 @@ public struct TerminalCanvasView: View {
     private let cellWidth: CGFloat
     private let cellHeight: CGFloat
 
-    public init(buffer: TerminalBuffer, theme: TerminusTheme = .defaultDark) {
+    public init(buffer: TerminalBuffer, theme: TerminusTheme = .defaultLight) {
         self.buffer = buffer
         self.theme = theme
         // Calculate cell metrics from monospaced font

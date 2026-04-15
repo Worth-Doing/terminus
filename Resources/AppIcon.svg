@@ -1,86 +1,212 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
-    <!-- Background gradient -->
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#1a1b2e"/>
-      <stop offset="50%" stop-color="#12131f"/>
-      <stop offset="100%" stop-color="#0d0e18"/>
+    <!-- Background gradient: deep black to graphite, top to bottom -->
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#151520"/>
+      <stop offset="100%" stop-color="#0B0B0F"/>
     </linearGradient>
-    <!-- Accent gradient for the prompt chevron -->
-    <linearGradient id="chevronGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#6BA3FF"/>
-      <stop offset="100%" stop-color="#4080E0"/>
+
+    <!-- Subtle top reflection (Apple-style) -->
+    <linearGradient id="reflectionGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.08"/>
+      <stop offset="40%" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
-    <!-- Cursor glow -->
-    <linearGradient id="cursorGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#8BC5FF"/>
-      <stop offset="100%" stop-color="#5A9AE6"/>
+
+    <!-- Chevron gradient: cyan-blue electric -->
+    <linearGradient id="chevronGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#70CFFF"/>
+      <stop offset="100%" stop-color="#3B8BF5"/>
     </linearGradient>
-    <!-- Subtle inner shadow -->
-    <filter id="innerGlow" x="-10%" y="-10%" width="120%" height="120%">
-      <feGaussianBlur in="SourceAlpha" stdDeviation="8" result="blur"/>
-      <feOffset dx="0" dy="4" result="offsetBlur"/>
-      <feComposite in="SourceGraphic" in2="offsetBlur" operator="over"/>
+
+    <!-- Cursor gradient: bright cyan -->
+    <linearGradient id="cursorGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#80DFFF"/>
+      <stop offset="100%" stop-color="#40B0F0"/>
+    </linearGradient>
+
+    <!-- Light trail gradient behind chevron -->
+    <linearGradient id="trailGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#3B8BF5" stop-opacity="0"/>
+      <stop offset="60%" stop-color="#3B8BF5" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#70CFFF" stop-opacity="0.25"/>
+    </linearGradient>
+
+    <!-- Orbit ring gradient -->
+    <linearGradient id="orbitGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#70CFFF" stop-opacity="0.18"/>
+      <stop offset="50%" stop-color="#3B8BF5" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#70CFFF" stop-opacity="0.14"/>
+    </linearGradient>
+
+    <!-- Radial glow behind the >_ symbol -->
+    <radialGradient id="coreGlow" cx="0.46" cy="0.50" r="0.30">
+      <stop offset="0%" stop-color="#40B0F0" stop-opacity="0.10"/>
+      <stop offset="60%" stop-color="#3B8BF5" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#3B8BF5" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Inner shadow for depth -->
+    <filter id="innerShadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="18" result="blur"/>
+      <feOffset dx="0" dy="6" result="shifted"/>
+      <feFlood flood-color="#000000" flood-opacity="0.35" result="color"/>
+      <feComposite in="color" in2="shifted" operator="in" result="shadow"/>
+      <feComposite in="SourceGraphic" in2="shadow" operator="over"/>
     </filter>
-    <!-- Drop shadow for depth -->
-    <filter id="dropShadow">
-      <feDropShadow dx="0" dy="6" stdDeviation="12" flood-color="#000" flood-opacity="0.4"/>
+
+    <!-- Cursor glow filter -->
+    <filter id="cursorGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="12" result="blur1"/>
+      <feGaussianBlur stdDeviation="4" result="blur2"/>
+      <feMerge>
+        <feMergeNode in="blur1"/>
+        <feMergeNode in="blur2"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
     </filter>
-    <!-- Glow effect for cursor -->
-    <filter id="glow">
-      <feGaussianBlur stdDeviation="6" result="blur"/>
+
+    <!-- Chevron trail glow -->
+    <filter id="trailGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
       <feMerge>
         <feMergeNode in="blur"/>
         <feMergeNode in="SourceGraphic"/>
       </feMerge>
     </filter>
+
+    <!-- Subtle noise texture via fractal -->
+    <filter id="noise" x="0%" y="0%" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" result="noise"/>
+      <feColorMatrix type="saturate" values="0" in="noise" result="gray"/>
+      <feComponentTransfer in="gray" result="faded">
+        <feFuncA type="linear" slope="0.03"/>
+      </feComponentTransfer>
+      <feBlend in="SourceGraphic" in2="faded" mode="overlay"/>
+    </filter>
+
+    <!-- Clip path for the icon shape -->
+    <clipPath id="iconClip">
+      <rect x="32" y="32" width="960" height="960" rx="215" ry="215"/>
+    </clipPath>
   </defs>
 
-  <!-- Background rounded square (macOS icon shape) -->
-  <rect x="32" y="32" width="960" height="960" rx="220" ry="220" fill="url(#bgGrad)"/>
+  <!-- ==================== BACKGROUND ==================== -->
 
-  <!-- Subtle border -->
-  <rect x="32" y="32" width="960" height="960" rx="220" ry="220"
-        fill="none" stroke="#2a2d4a" stroke-width="2" opacity="0.6"/>
+  <!-- Main icon shape with gradient -->
+  <rect x="32" y="32" width="960" height="960" rx="215" ry="215"
+        fill="url(#bgGrad)" filter="url(#noise)"/>
 
-  <!-- Top bar decoration (3 dots) -->
-  <circle cx="200" cy="195" r="18" fill="#FF5F57" opacity="0.85"/>
-  <circle cx="260" cy="195" r="18" fill="#FFBD2E" opacity="0.85"/>
-  <circle cx="320" cy="195" r="18" fill="#28CA41" opacity="0.85"/>
+  <!-- Subtle 1px border for definition -->
+  <rect x="32" y="32" width="960" height="960" rx="215" ry="215"
+        fill="none" stroke="#ffffff" stroke-width="1.5" stroke-opacity="0.06"/>
 
-  <!-- Separator line under dots -->
-  <line x1="140" y1="240" x2="884" y2="240" stroke="#2a2d4a" stroke-width="1.5" opacity="0.5"/>
+  <!-- Top reflection (Apple glass effect) -->
+  <rect x="32" y="32" width="960" height="480" rx="215" ry="215"
+        fill="url(#reflectionGrad)" clip-path="url(#iconClip)"/>
 
-  <!-- Terminal prompt chevron ">" -->
-  <g filter="url(#dropShadow)">
-    <polyline points="220,440 340,530 220,620"
-              fill="none" stroke="url(#chevronGrad)" stroke-width="48"
+  <!-- ==================== CORE ENERGY RING ==================== -->
+
+  <!-- Subtle orbit ring around the >_ symbol ("Core System Engine") -->
+  <ellipse cx="470" cy="512" rx="260" ry="260"
+           fill="none" stroke="url(#orbitGrad)" stroke-width="1.2"/>
+
+  <!-- Secondary thinner orbit -->
+  <ellipse cx="470" cy="512" rx="300" ry="300"
+           fill="none" stroke="#70CFFF" stroke-width="0.5" stroke-opacity="0.06"/>
+
+  <!-- Core radial glow -->
+  <rect x="32" y="32" width="960" height="960" rx="215" ry="215"
+        fill="url(#coreGlow)" clip-path="url(#iconClip)"/>
+
+  <!-- ==================== AUGMENTED DOTS (AI thinking) ==================== -->
+
+  <!-- Micro dots suggesting intelligence / neural activity -->
+  <g opacity="0.12">
+    <!-- Top arc dots -->
+    <circle cx="310" cy="290" r="2.5" fill="#70CFFF"/>
+    <circle cx="355" cy="268" r="1.8" fill="#70CFFF"/>
+    <circle cx="405" cy="256" r="2.2" fill="#70CFFF"/>
+    <circle cx="460" cy="252" r="1.5" fill="#70CFFF"/>
+    <circle cx="520" cy="256" r="2.0" fill="#70CFFF"/>
+    <circle cx="575" cy="268" r="1.5" fill="#70CFFF"/>
+    <circle cx="625" cy="290" r="2.5" fill="#70CFFF"/>
+
+    <!-- Bottom arc dots -->
+    <circle cx="310" cy="735" r="2.5" fill="#3B8BF5"/>
+    <circle cx="355" cy="757" r="1.8" fill="#3B8BF5"/>
+    <circle cx="405" cy="768" r="2.2" fill="#3B8BF5"/>
+    <circle cx="460" cy="772" r="1.5" fill="#3B8BF5"/>
+    <circle cx="520" cy="768" r="2.0" fill="#3B8BF5"/>
+    <circle cx="575" cy="757" r="1.5" fill="#3B8BF5"/>
+    <circle cx="625" cy="735" r="2.5" fill="#3B8BF5"/>
+
+    <!-- Side dots -->
+    <circle cx="225" cy="420" r="2.0" fill="#70CFFF"/>
+    <circle cx="215" cy="480" r="1.5" fill="#70CFFF"/>
+    <circle cx="212" cy="540" r="2.0" fill="#70CFFF"/>
+    <circle cx="218" cy="600" r="1.5" fill="#70CFFF"/>
+
+    <circle cx="720" cy="400" r="2.0" fill="#3B8BF5"/>
+    <circle cx="728" cy="460" r="1.5" fill="#3B8BF5"/>
+    <circle cx="730" cy="520" r="1.8" fill="#3B8BF5"/>
+    <circle cx="728" cy="580" r="1.5" fill="#3B8BF5"/>
+    <circle cx="720" cy="640" r="2.0" fill="#3B8BF5"/>
+  </g>
+
+  <!-- Faint connecting lines between dots (neural paths) -->
+  <g stroke="#70CFFF" stroke-width="0.6" stroke-opacity="0.05" fill="none">
+    <line x1="310" y1="290" x2="355" y2="268"/>
+    <line x1="355" y1="268" x2="405" y2="256"/>
+    <line x1="405" y1="256" x2="460" y2="252"/>
+    <line x1="460" y1="252" x2="520" y2="256"/>
+    <line x1="520" y1="256" x2="575" y2="268"/>
+    <line x1="575" y1="268" x2="625" y2="290"/>
+    <line x1="310" y1="735" x2="355" y2="757"/>
+    <line x1="355" y1="757" x2="405" y2="768"/>
+    <line x1="405" y1="768" x2="460" y2="772"/>
+    <line x1="460" y1="772" x2="520" y2="768"/>
+    <line x1="520" y1="768" x2="575" y2="757"/>
+    <line x1="575" y1="757" x2="625" y2="735"/>
+  </g>
+
+  <!-- ==================== LIGHT TRAIL BEHIND CHEVRON ==================== -->
+
+  <!-- Speed trail: subtle streak extending from chevron tip -->
+  <g filter="url(#trailGlow)" opacity="0.6">
+    <polygon points="280,512 390,512 390,504 280,504"
+             fill="url(#trailGrad)"/>
+    <polygon points="260,512 390,512 390,520 260,520"
+             fill="url(#trailGrad)" opacity="0.5"/>
+  </g>
+
+  <!-- ==================== MAIN >_ SYMBOL ==================== -->
+
+  <!-- The chevron ">" — geometric, thick, precise -->
+  <g filter="url(#innerShadow)">
+    <polyline points="320,400 480,512 320,624"
+              fill="none" stroke="url(#chevronGrad)" stroke-width="52"
               stroke-linecap="round" stroke-linejoin="round"/>
   </g>
 
-  <!-- Cursor block (blinking cursor) -->
-  <g filter="url(#glow)">
-    <rect x="400" y="490" width="28" height="80" rx="4" fill="url(#cursorGrad)" opacity="0.95"/>
+  <!-- The cursor "_" — glowing bar, alive -->
+  <g filter="url(#cursorGlow)">
+    <rect x="530" y="580" width="120" height="44" rx="6"
+          fill="url(#cursorGrad)"/>
   </g>
 
-  <!-- Stylized text lines (representing terminal output) -->
-  <!-- Line 1: shorter -->
-  <rect x="220" y="330" width="320" height="12" rx="6" fill="#4a5080" opacity="0.35"/>
-  <rect x="560" y="330" width="180" height="12" rx="6" fill="#6BA3FF" opacity="0.2"/>
+  <!-- Extra subtle glow layer on cursor for "pulse" feel -->
+  <rect x="530" y="580" width="120" height="44" rx="6"
+        fill="#80DFFF" opacity="0.15">
+    <animate attributeName="opacity" values="0.15;0.25;0.15" dur="2.5s" repeatCount="indefinite"/>
+  </rect>
 
-  <!-- Line 3: output below prompt -->
-  <rect x="220" y="700" width="440" height="12" rx="6" fill="#4a5080" opacity="0.3"/>
-  <rect x="680" y="700" width="120" height="12" rx="6" fill="#28CA41" opacity="0.25"/>
+  <!-- ==================== SPLIT REALITY SEPARATOR ==================== -->
 
-  <!-- Line 4 -->
-  <rect x="220" y="750" width="280" height="12" rx="6" fill="#4a5080" opacity="0.25"/>
+  <!-- Very subtle vertical divider line (left=input, right=output) -->
+  <line x1="512" y1="180" x2="512" y2="844"
+        stroke="#ffffff" stroke-width="0.8" stroke-opacity="0.025"/>
 
-  <!-- Line 5 -->
-  <rect x="220" y="800" width="380" height="12" rx="6" fill="#4a5080" opacity="0.2"/>
-  <rect x="620" y="800" width="90" height="12" rx="6" fill="#FFBD2E" opacity="0.2"/>
-
-  <!-- Bottom accent: subtle "T" watermark -->
-  <text x="512" y="920" text-anchor="middle" font-family="SF Mono, Menlo, monospace"
-        font-size="60" font-weight="700" fill="#3a3d5a" opacity="0.15"
-        letter-spacing="12">TERMINUS</text>
+  <!-- Right side: ever-so-slightly brighter overlay -->
+  <rect x="512" y="32" width="480" height="960" rx="0" ry="0"
+        fill="#ffffff" opacity="0.012" clip-path="url(#iconClip)"/>
 </svg>

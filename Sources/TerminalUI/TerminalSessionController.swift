@@ -152,7 +152,7 @@ public struct TerminalPanelView: View {
 
     public init(
         controller: TerminalSessionController,
-        theme: TerminusTheme = .defaultDark,
+        theme: TerminusTheme = .defaultLight,
         isFocused: Bool = true
     ) {
         self.controller = controller
@@ -192,13 +192,13 @@ struct TerminalStatusBar: View {
         HStack(spacing: TerminusDesign.spacingSM) {
             if controller.shellIntegrationActive {
                 Circle()
-                    .fill(TerminusColors.accentSuccess)
+                    .fill(TerminusAccent.success)
                     .frame(width: 6, height: 6)
             }
 
             Text(shortenPath(controller.currentDirectory))
                 .font(.terminusUI(size: 11))
-                .foregroundStyle(TerminusColors.textTertiary)
+                .foregroundStyle(theme.chromeTextTertiary)
                 .lineLimit(1)
 
             Spacer()
@@ -210,16 +210,16 @@ struct TerminalStatusBar: View {
                     Text("\(exitCode)")
                         .font(.terminusUI(size: 10))
                 }
-                .foregroundStyle(TerminusColors.accentError)
+                .foregroundStyle(TerminusAccent.error)
             }
 
             Text("\(controller.buffer.size.columns)x\(controller.buffer.size.rows)")
                 .font(.terminusUI(size: 10))
-                .foregroundStyle(TerminusColors.textTertiary)
+                .foregroundStyle(theme.chromeTextTertiary)
         }
         .padding(.horizontal, TerminusDesign.spacingSM)
         .padding(.vertical, 3)
-        .background(TerminusColors.toolbarBackground.opacity(0.9))
+        .background(theme.chromeBackground.opacity(0.9))
     }
 
     private func shortenPath(_ path: String) -> String {

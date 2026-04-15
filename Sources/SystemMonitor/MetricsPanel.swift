@@ -1,11 +1,15 @@
 import SwiftUI
+import SharedUI
 
 // MARK: - Metrics Panel View
 
 public struct MetricsPanel: View {
     @State private var monitor = SystemMonitor()
+    let theme: TerminusTheme
 
-    public init() {}
+    public init(theme: TerminusTheme) {
+        self.theme = theme
+    }
 
     public var body: some View {
         ScrollView {
@@ -14,21 +18,22 @@ public struct MetricsPanel: View {
                 HStack {
                     Image(systemName: "gauge.with.dots.needle.33percent")
                         .font(.system(size: 14))
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(TerminusAccent.primary)
                     Text("System Monitor")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(theme.chromeText)
                     Spacer()
                 }
                 .padding(.bottom, 4)
 
                 // CPU Section
-                MetricSection(title: "CPU", icon: "cpu") {
+                MetricSection(title: "CPU", icon: "cpu", theme: theme) {
                     GaugeBar(
                         value: monitor.metrics.cpu.totalUsagePercent,
                         maxValue: 100,
                         color: cpuColor(monitor.metrics.cpu.totalUsagePercent),
-                        label: String(format: "%.1f%%", monitor.metrics.cpu.totalUsagePercent)
+                        label: String(format: "%.1f%%", monitor.metrics.cpu.totalUsagePercent),
+                        theme: theme
                     )
 
                     MiniSparkline(
@@ -39,28 +44,29 @@ public struct MetricsPanel: View {
                     .frame(height: 32)
 
                     HStack {
-                        MetricLabel("User", String(format: "%.1f%%", monitor.metrics.cpu.userPercent))
+                        MetricLabel("User", String(format: "%.1f%%", monitor.metrics.cpu.userPercent), theme: theme)
                         Spacer()
-                        MetricLabel("System", String(format: "%.1f%%", monitor.metrics.cpu.systemPercent))
+                        MetricLabel("System", String(format: "%.1f%%", monitor.metrics.cpu.systemPercent), theme: theme)
                         Spacer()
-                        MetricLabel("Cores", "\(monitor.metrics.cpu.coreCount)")
+                        MetricLabel("Cores", "\(monitor.metrics.cpu.coreCount)", theme: theme)
                     }
 
                     if monitor.metrics.cpu.processCount > 0 {
                         HStack {
-                            MetricLabel("Processes", "\(monitor.metrics.cpu.processCount)")
+                            MetricLabel("Processes", "\(monitor.metrics.cpu.processCount)", theme: theme)
                             Spacer()
                         }
                     }
                 }
 
                 // Memory Section
-                MetricSection(title: "Memory", icon: "memorychip") {
+                MetricSection(title: "Memory", icon: "memorychip", theme: theme) {
                     GaugeBar(
                         value: monitor.metrics.memory.usagePercent,
                         maxValue: 100,
                         color: memoryColor(monitor.metrics.memory.pressure),
-                        label: String(format: "%.1f%%", monitor.metrics.memory.usagePercent)
+                        label: String(format: "%.1f%%", monitor.metrics.memory.usagePercent),
+                        theme: theme
                     )
 
                     MiniSparkline(
@@ -71,68 +77,70 @@ public struct MetricsPanel: View {
                     .frame(height: 32)
 
                     HStack {
-                        MetricLabel("Used", formatBytes(monitor.metrics.memory.usedBytes))
+                        MetricLabel("Used", formatBytes(monitor.metrics.memory.usedBytes), theme: theme)
                         Spacer()
-                        MetricLabel("Total", formatBytes(monitor.metrics.memory.totalBytes))
+                        MetricLabel("Total", formatBytes(monitor.metrics.memory.totalBytes), theme: theme)
                     }
 
                     HStack {
-                        MetricLabel("Active", formatBytes(monitor.metrics.memory.activeBytes))
+                        MetricLabel("Active", formatBytes(monitor.metrics.memory.activeBytes), theme: theme)
                         Spacer()
-                        MetricLabel("Wired", formatBytes(monitor.metrics.memory.wiredBytes))
+                        MetricLabel("Wired", formatBytes(monitor.metrics.memory.wiredBytes), theme: theme)
                     }
 
                     if monitor.metrics.memory.compressedBytes > 0 {
                         HStack {
-                            MetricLabel("Compressed", formatBytes(monitor.metrics.memory.compressedBytes))
+                            MetricLabel("Compressed", formatBytes(monitor.metrics.memory.compressedBytes), theme: theme)
                             Spacer()
                             if monitor.metrics.memory.swapUsedBytes > 0 {
-                                MetricLabel("Swap", formatBytes(monitor.metrics.memory.swapUsedBytes))
+                                MetricLabel("Swap", formatBytes(monitor.metrics.memory.swapUsedBytes), theme: theme)
                             }
                         }
                     }
                 }
 
                 // GPU Section
-                MetricSection(title: "GPU", icon: "display") {
+                MetricSection(title: "GPU", icon: "display", theme: theme) {
                     Text(monitor.metrics.gpu.name)
                         .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(theme.chromeTextSecondary)
 
                     GaugeBar(
                         value: monitor.metrics.gpu.utilizationPercent,
                         maxValue: 100,
                         color: .purple,
-                        label: String(format: "%.0f%%", monitor.metrics.gpu.utilizationPercent)
+                        label: String(format: "%.0f%%", monitor.metrics.gpu.utilizationPercent),
+                        theme: theme
                     )
 
                     if monitor.metrics.gpu.vramTotal > 0 {
                         HStack {
-                            MetricLabel("VRAM", formatBytes(monitor.metrics.gpu.vramUsed))
+                            MetricLabel("VRAM", formatBytes(monitor.metrics.gpu.vramUsed), theme: theme)
                             Spacer()
-                            MetricLabel("Total", formatBytes(monitor.metrics.gpu.vramTotal))
+                            MetricLabel("Total", formatBytes(monitor.metrics.gpu.vramTotal), theme: theme)
                         }
                     }
                 }
 
                 // Disk Section
-                MetricSection(title: "Disk", icon: "internaldrive") {
+                MetricSection(title: "Disk", icon: "internaldrive", theme: theme) {
                     GaugeBar(
                         value: monitor.metrics.disk.usagePercent,
                         maxValue: 100,
                         color: .orange,
-                        label: String(format: "%.1f%%", monitor.metrics.disk.usagePercent)
+                        label: String(format: "%.1f%%", monitor.metrics.disk.usagePercent),
+                        theme: theme
                     )
 
                     HStack {
-                        MetricLabel("Used", formatBytes(monitor.metrics.disk.usedBytes))
+                        MetricLabel("Used", formatBytes(monitor.metrics.disk.usedBytes), theme: theme)
                         Spacer()
-                        MetricLabel("Free", formatBytes(monitor.metrics.disk.freeBytes))
+                        MetricLabel("Free", formatBytes(monitor.metrics.disk.freeBytes), theme: theme)
                     }
                 }
 
                 // Network Section
-                MetricSection(title: "Network", icon: "network") {
+                MetricSection(title: "Network", icon: "network", theme: theme) {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 4) {
@@ -141,11 +149,11 @@ public struct MetricsPanel: View {
                                     .foregroundStyle(.green)
                                 Text(formatBytesPerSec(monitor.metrics.network.receivedBytesPerSec))
                                     .font(.system(size: 12, design: .monospaced))
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(theme.chromeText)
                             }
                             Text("Download")
                                 .font(.system(size: 9))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(theme.chromeTextSecondary)
                         }
 
                         Spacer()
@@ -154,26 +162,26 @@ public struct MetricsPanel: View {
                             HStack(spacing: 4) {
                                 Text(formatBytesPerSec(monitor.metrics.network.sentBytesPerSec))
                                     .font(.system(size: 12, design: .monospaced))
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(theme.chromeText)
                                 Image(systemName: "arrow.up")
                                     .font(.system(size: 9))
                                     .foregroundStyle(.blue)
                             }
                             Text("Upload")
                                 .font(.system(size: 9))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(theme.chromeTextSecondary)
                         }
                     }
                 }
 
                 // Top Processes
                 if !monitor.metrics.topProcesses.isEmpty {
-                    MetricSection(title: "Top Processes", icon: "list.number") {
+                    MetricSection(title: "Top Processes", icon: "list.number", theme: theme) {
                         ForEach(monitor.metrics.topProcesses) { proc in
                             HStack {
                                 Text(proc.name)
                                     .font(.system(size: 11, design: .monospaced))
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(theme.chromeText)
                                     .lineLimit(1)
                                     .frame(maxWidth: 100, alignment: .leading)
 
@@ -181,7 +189,7 @@ public struct MetricsPanel: View {
 
                                 Text(formatBytes(proc.memoryBytes))
                                     .font(.system(size: 10, design: .monospaced))
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(theme.chromeTextSecondary)
                             }
                         }
                     }
@@ -190,7 +198,7 @@ public struct MetricsPanel: View {
             .padding(12)
         }
         .frame(width: 240)
-        .background(Color(red: 0.08, green: 0.08, blue: 0.10))
+        .background(theme.chromeBackground)
         .onAppear { monitor.start(interval: 1.5) }
         .onDisappear { monitor.stop() }
     }
@@ -215,6 +223,7 @@ public struct MetricsPanel: View {
 struct MetricSection<Content: View>: View {
     let title: String
     let icon: String
+    let theme: TerminusTheme
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -222,10 +231,10 @@ struct MetricSection<Content: View>: View {
             HStack(spacing: 5) {
                 Image(systemName: icon)
                     .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme.chromeTextSecondary)
                 Text(title)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme.chromeTextSecondary)
                     .textCase(.uppercase)
             }
 
@@ -234,11 +243,11 @@ struct MetricSection<Content: View>: View {
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.white.opacity(0.03))
+                .fill(theme.chromeHover)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.white.opacity(0.06), lineWidth: 0.5)
+                .stroke(theme.chromeBorder, lineWidth: 0.5)
         )
     }
 }
@@ -250,13 +259,14 @@ struct GaugeBar: View {
     let maxValue: Double
     let color: Color
     let label: String
+    let theme: TerminusTheme
 
     var body: some View {
         VStack(spacing: 3) {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(Color.white.opacity(0.08))
+                        .fill(theme.chromeBorder)
 
                     RoundedRectangle(cornerRadius: 3)
                         .fill(
@@ -275,7 +285,7 @@ struct GaugeBar: View {
                 Spacer()
                 Text(label)
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.8))
+                    .foregroundStyle(theme.chromeText.opacity(0.8))
             }
         }
     }
@@ -308,7 +318,6 @@ struct MiniSparkline: View {
                 }
                 .stroke(color.opacity(0.7), lineWidth: 1.5)
 
-                // Fill area under curve
                 Path { path in
                     let stepX = geo.size.width / CGFloat(data.count - 1)
                     let height = geo.size.height
@@ -341,20 +350,22 @@ struct MiniSparkline: View {
 struct MetricLabel: View {
     let title: String
     let value: String
+    let theme: TerminusTheme
 
-    init(_ title: String, _ value: String) {
+    init(_ title: String, _ value: String, theme: TerminusTheme) {
         self.title = title
         self.value = value
+        self.theme = theme
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(title)
                 .font(.system(size: 9))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(theme.chromeTextSecondary)
             Text(value)
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white)
+                .foregroundStyle(theme.chromeText)
         }
     }
 }

@@ -21,13 +21,16 @@ public struct OnboardingView: View {
     @State private var isValidating: Bool = false
 
     private let secureStorage: SecureStorage
+    private let theme: TerminusTheme
     private let onComplete: () -> Void
 
     public init(
         secureStorage: SecureStorage = SecureStorage(),
+        theme: TerminusTheme = .defaultLight,
         onComplete: @escaping () -> Void
     ) {
         self.secureStorage = secureStorage
+        self.theme = theme
         self.onComplete = onComplete
     }
 
@@ -38,8 +41,8 @@ public struct OnboardingView: View {
                 ForEach(OnboardingStep.allCases, id: \.rawValue) { step in
                     Capsule()
                         .fill(step.rawValue <= currentStep.rawValue
-                              ? TerminusColors.accentPrimary
-                              : TerminusColors.divider)
+                              ? TerminusAccent.primary
+                              : theme.chromeDivider)
                         .frame(height: 3)
                 }
             }
@@ -76,7 +79,7 @@ public struct OnboardingView: View {
                         }
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(TerminusColors.textSecondary)
+                    .foregroundStyle(theme.chromeTextSecondary)
                 }
 
                 Spacer()
@@ -85,13 +88,13 @@ public struct OnboardingView: View {
                     handleNext()
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(TerminusColors.accentPrimary)
+                .tint(TerminusAccent.primary)
                 .disabled(isValidating)
             }
             .padding(TerminusDesign.spacingXL)
         }
         .frame(width: 600, height: 450)
-        .background(Color(red: 0.08, green: 0.08, blue: 0.10))
+        .background(theme.chromeBackground)
     }
 
     // MARK: - Content Views
@@ -100,11 +103,11 @@ public struct OnboardingView: View {
         VStack(spacing: TerminusDesign.spacingLG) {
             Text("Terminus")
                 .font(.terminusUI(size: 42, weight: .bold))
-                .foregroundStyle(TerminusColors.textPrimary)
+                .foregroundStyle(theme.chromeText)
 
             Text("The terminal that learns how you work.")
                 .font(.terminusUI(size: 18, weight: .medium))
-                .foregroundStyle(TerminusColors.textSecondary)
+                .foregroundStyle(theme.chromeTextSecondary)
         }
     }
 
@@ -138,11 +141,11 @@ public struct OnboardingView: View {
         VStack(spacing: TerminusDesign.spacingLG) {
             Text("OpenRouter API Key")
                 .font(.terminusUI(size: 24, weight: .semibold))
-                .foregroundStyle(TerminusColors.textPrimary)
+                .foregroundStyle(theme.chromeText)
 
             Text("AI features are powered by OpenRouter. Enter your API key to enable them, or skip to use Terminus without AI.")
                 .font(.terminusUI(size: 14))
-                .foregroundStyle(TerminusColors.textSecondary)
+                .foregroundStyle(theme.chromeTextSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 400)
 
@@ -153,7 +156,7 @@ public struct OnboardingView: View {
             if let error = apiKeyError {
                 Text(error)
                     .font(.terminusUI(size: 12))
-                    .foregroundStyle(TerminusColors.accentError)
+                    .foregroundStyle(TerminusAccent.error)
             }
 
             Button("Skip for now") {
@@ -162,7 +165,7 @@ public struct OnboardingView: View {
                 }
             }
             .buttonStyle(.plain)
-            .foregroundStyle(TerminusColors.textTertiary)
+            .foregroundStyle(theme.chromeTextTertiary)
             .font(.terminusUI(size: 13))
         }
     }
@@ -171,15 +174,15 @@ public struct OnboardingView: View {
         VStack(spacing: TerminusDesign.spacingLG) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 48))
-                .foregroundStyle(TerminusColors.accentSuccess)
+                .foregroundStyle(TerminusAccent.success)
 
             Text("You're all set.")
                 .font(.terminusUI(size: 24, weight: .semibold))
-                .foregroundStyle(TerminusColors.textPrimary)
+                .foregroundStyle(theme.chromeText)
 
             Text("Terminus is ready to go.")
                 .font(.terminusUI(size: 16))
-                .foregroundStyle(TerminusColors.textSecondary)
+                .foregroundStyle(theme.chromeTextSecondary)
         }
     }
 
@@ -189,16 +192,16 @@ public struct OnboardingView: View {
         HStack(alignment: .top, spacing: TerminusDesign.spacingMD) {
             Image(systemName: icon)
                 .font(.system(size: 20))
-                .foregroundStyle(TerminusColors.accentPrimary)
+                .foregroundStyle(TerminusAccent.primary)
                 .frame(width: 32)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.terminusUI(size: 15, weight: .semibold))
-                    .foregroundStyle(TerminusColors.textPrimary)
+                    .foregroundStyle(theme.chromeText)
                 Text(description)
                     .font(.terminusUI(size: 13))
-                    .foregroundStyle(TerminusColors.textSecondary)
+                    .foregroundStyle(theme.chromeTextSecondary)
             }
         }
     }

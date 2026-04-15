@@ -84,11 +84,19 @@ public struct AnsiColorPalette: Sendable {
     }
 }
 
+// MARK: - Theme Appearance
+
+public enum ThemeAppearance: String, Sendable, Codable {
+    case light
+    case dark
+}
+
 // MARK: - Terminal Theme
 
 public struct TerminusTheme: Sendable, Identifiable {
     public let id: String
     public let name: String
+    public let appearance: ThemeAppearance
     public var backgroundColor: Color
     public var foregroundColor: Color
     public var selectionColor: Color
@@ -98,9 +106,20 @@ public struct TerminusTheme: Sendable, Identifiable {
     public var fontSize: CGFloat
     public var vibrancy: Bool
 
+    // UI chrome colors (toolbar, sidebar, panels)
+    public var chromeBackground: Color
+    public var chromeBorder: Color
+    public var chromeText: Color
+    public var chromeTextSecondary: Color
+    public var chromeTextTertiary: Color
+    public var chromeDivider: Color
+    public var chromeHover: Color
+    public var chromeOverlay: Color
+
     public init(
         id: String,
         name: String,
+        appearance: ThemeAppearance,
         backgroundColor: Color,
         foregroundColor: Color,
         selectionColor: Color,
@@ -108,10 +127,19 @@ public struct TerminusTheme: Sendable, Identifiable {
         ansiColors: AnsiColorPalette,
         fontFamily: String = "SF Mono",
         fontSize: CGFloat = 14,
-        vibrancy: Bool = false
+        vibrancy: Bool = false,
+        chromeBackground: Color? = nil,
+        chromeBorder: Color? = nil,
+        chromeText: Color? = nil,
+        chromeTextSecondary: Color? = nil,
+        chromeTextTertiary: Color? = nil,
+        chromeDivider: Color? = nil,
+        chromeHover: Color? = nil,
+        chromeOverlay: Color? = nil
     ) {
         self.id = id
         self.name = name
+        self.appearance = appearance
         self.backgroundColor = backgroundColor
         self.foregroundColor = foregroundColor
         self.selectionColor = selectionColor
@@ -120,6 +148,32 @@ public struct TerminusTheme: Sendable, Identifiable {
         self.fontFamily = fontFamily
         self.fontSize = fontSize
         self.vibrancy = vibrancy
+
+        let isDark = appearance == .dark
+        self.chromeBackground = chromeBackground ?? (isDark
+            ? Color(red: 0.10, green: 0.10, blue: 0.12)
+            : Color(red: 0.96, green: 0.96, blue: 0.97))
+        self.chromeBorder = chromeBorder ?? (isDark
+            ? Color.white.opacity(0.08)
+            : Color.black.opacity(0.10))
+        self.chromeText = chromeText ?? (isDark
+            ? Color(red: 0.90, green: 0.91, blue: 0.93)
+            : Color(red: 0.10, green: 0.10, blue: 0.12))
+        self.chromeTextSecondary = chromeTextSecondary ?? (isDark
+            ? Color(red: 0.55, green: 0.56, blue: 0.60)
+            : Color(red: 0.40, green: 0.40, blue: 0.44))
+        self.chromeTextTertiary = chromeTextTertiary ?? (isDark
+            ? Color(red: 0.35, green: 0.36, blue: 0.40)
+            : Color(red: 0.60, green: 0.60, blue: 0.64))
+        self.chromeDivider = chromeDivider ?? (isDark
+            ? Color.white.opacity(0.06)
+            : Color.black.opacity(0.08))
+        self.chromeHover = chromeHover ?? (isDark
+            ? Color.white.opacity(0.04)
+            : Color.black.opacity(0.04))
+        self.chromeOverlay = chromeOverlay ?? (isDark
+            ? Color.black.opacity(0.6)
+            : Color.black.opacity(0.3))
     }
 
     /// Resolve a TerminalColor to a SwiftUI Color
@@ -133,14 +187,58 @@ public struct TerminusTheme: Sendable, Identifiable {
             Color(red: Double(r) / 255, green: Double(g) / 255, blue: Double(b) / 255)
         }
     }
+
+    /// Whether this is a dark theme
+    public var isDark: Bool { appearance == .dark }
 }
 
 // MARK: - Built-in Themes
 
 extension TerminusTheme {
+
+    // MARK: Light Themes
+
+    public static let defaultLight = TerminusTheme(
+        id: "defaultLight",
+        name: "Terminus Light",
+        appearance: .light,
+        backgroundColor: Color(red: 1.0, green: 1.0, blue: 1.0),
+        foregroundColor: Color(red: 0.13, green: 0.13, blue: 0.15),
+        selectionColor: Color(red: 0.30, green: 0.55, blue: 0.85).opacity(0.25),
+        cursorColor: Color(red: 0.20, green: 0.45, blue: 0.80),
+        ansiColors: .terminusLight,
+        chromeBackground: Color(red: 0.965, green: 0.965, blue: 0.975),
+        chromeBorder: Color.black.opacity(0.10),
+        chromeText: Color(red: 0.12, green: 0.12, blue: 0.14),
+        chromeTextSecondary: Color(red: 0.38, green: 0.38, blue: 0.42),
+        chromeTextTertiary: Color(red: 0.58, green: 0.58, blue: 0.62),
+        chromeDivider: Color.black.opacity(0.08),
+        chromeHover: Color.black.opacity(0.04),
+        chromeOverlay: Color.black.opacity(0.25)
+    )
+
+    public static let solarizedLight = TerminusTheme(
+        id: "solarizedLight",
+        name: "Solarized Light",
+        appearance: .light,
+        backgroundColor: Color(red: 0.992, green: 0.965, blue: 0.890),
+        foregroundColor: Color(red: 0.396, green: 0.482, blue: 0.514),
+        selectionColor: Color(red: 0.933, green: 0.910, blue: 0.835).opacity(0.5),
+        cursorColor: Color(red: 0.396, green: 0.482, blue: 0.514),
+        ansiColors: .solarized,
+        chromeBackground: Color(red: 0.960, green: 0.940, blue: 0.870),
+        chromeBorder: Color.black.opacity(0.08),
+        chromeText: Color(red: 0.345, green: 0.431, blue: 0.459),
+        chromeTextSecondary: Color(red: 0.514, green: 0.580, blue: 0.588),
+        chromeTextTertiary: Color(red: 0.627, green: 0.680, blue: 0.690)
+    )
+
+    // MARK: Dark Themes
+
     public static let defaultDark = TerminusTheme(
         id: "defaultDark",
         name: "Terminus Dark",
+        appearance: .dark,
         backgroundColor: Color(red: 0.08, green: 0.08, blue: 0.10),
         foregroundColor: Color(red: 0.90, green: 0.91, blue: 0.93),
         selectionColor: Color(red: 0.25, green: 0.35, blue: 0.55).opacity(0.6),
@@ -151,6 +249,7 @@ extension TerminusTheme {
     public static let solarizedDark = TerminusTheme(
         id: "solarizedDark",
         name: "Solarized Dark",
+        appearance: .dark,
         backgroundColor: Color(red: 0.0, green: 0.169, blue: 0.212),
         foregroundColor: Color(red: 0.514, green: 0.580, blue: 0.588),
         selectionColor: Color(red: 0.027, green: 0.212, blue: 0.259).opacity(0.6),
@@ -161,6 +260,7 @@ extension TerminusTheme {
     public static let dracula = TerminusTheme(
         id: "dracula",
         name: "Dracula",
+        appearance: .dark,
         backgroundColor: Color(red: 0.157, green: 0.165, blue: 0.212),
         foregroundColor: Color(red: 0.973, green: 0.973, blue: 0.949),
         selectionColor: Color(red: 0.263, green: 0.278, blue: 0.353).opacity(0.6),
@@ -168,18 +268,51 @@ extension TerminusTheme {
         ansiColors: .dracula
     )
 
+    public static let nord = TerminusTheme(
+        id: "nord",
+        name: "Nord",
+        appearance: .dark,
+        backgroundColor: Color(red: 0.180, green: 0.204, blue: 0.251),
+        foregroundColor: Color(red: 0.847, green: 0.871, blue: 0.914),
+        selectionColor: Color(red: 0.263, green: 0.298, blue: 0.369).opacity(0.6),
+        cursorColor: Color(red: 0.847, green: 0.871, blue: 0.914),
+        ansiColors: .nord
+    )
+
     public static let allThemes: [TerminusTheme] = [
-        .defaultDark, .solarizedDark, .dracula,
+        .defaultLight, .solarizedLight,
+        .defaultDark, .solarizedDark, .dracula, .nord,
     ]
 
     public static func theme(withID id: String) -> TerminusTheme {
-        allThemes.first { $0.id == id } ?? .defaultDark
+        allThemes.first { $0.id == id } ?? .defaultLight
     }
 }
 
 // MARK: - Built-in Color Palettes
 
 extension AnsiColorPalette {
+
+    // Light palette with higher contrast colors suitable for white backgrounds
+    public static let terminusLight = AnsiColorPalette(
+        black:         Color(red: 0.20, green: 0.20, blue: 0.22),
+        red:           Color(red: 0.78, green: 0.15, blue: 0.15),
+        green:         Color(red: 0.15, green: 0.58, blue: 0.25),
+        yellow:        Color(red: 0.65, green: 0.52, blue: 0.05),
+        blue:          Color(red: 0.15, green: 0.35, blue: 0.75),
+        magenta:       Color(red: 0.60, green: 0.20, blue: 0.68),
+        cyan:          Color(red: 0.10, green: 0.55, blue: 0.58),
+        white:         Color(red: 0.85, green: 0.85, blue: 0.87),
+        brightBlack:   Color(red: 0.45, green: 0.45, blue: 0.48),
+        brightRed:     Color(red: 0.88, green: 0.25, blue: 0.25),
+        brightGreen:   Color(red: 0.20, green: 0.68, blue: 0.35),
+        brightYellow:  Color(red: 0.78, green: 0.62, blue: 0.10),
+        brightBlue:    Color(red: 0.25, green: 0.48, blue: 0.88),
+        brightMagenta: Color(red: 0.72, green: 0.32, blue: 0.82),
+        brightCyan:    Color(red: 0.15, green: 0.65, blue: 0.70),
+        brightWhite:   Color(red: 0.95, green: 0.95, blue: 0.96)
+    )
+
     public static let terminusDark = AnsiColorPalette(
         black:         Color(red: 0.15, green: 0.15, blue: 0.17),
         red:           Color(red: 0.91, green: 0.35, blue: 0.35),
@@ -235,5 +368,24 @@ extension AnsiColorPalette {
         brightMagenta: Color(red: 1.000, green: 0.600, blue: 0.850),
         brightCyan:    Color(red: 0.651, green: 0.953, blue: 1.000),
         brightWhite:   Color(red: 1.000, green: 1.000, blue: 1.000)
+    )
+
+    public static let nord = AnsiColorPalette(
+        black:         Color(red: 0.231, green: 0.259, blue: 0.322),
+        red:           Color(red: 0.749, green: 0.380, blue: 0.416),
+        green:         Color(red: 0.639, green: 0.745, blue: 0.549),
+        yellow:        Color(red: 0.922, green: 0.796, blue: 0.545),
+        blue:          Color(red: 0.506, green: 0.631, blue: 0.757),
+        magenta:       Color(red: 0.706, green: 0.557, blue: 0.678),
+        cyan:          Color(red: 0.533, green: 0.753, blue: 0.816),
+        white:         Color(red: 0.847, green: 0.871, blue: 0.914),
+        brightBlack:   Color(red: 0.298, green: 0.337, blue: 0.416),
+        brightRed:     Color(red: 0.749, green: 0.380, blue: 0.416),
+        brightGreen:   Color(red: 0.639, green: 0.745, blue: 0.549),
+        brightYellow:  Color(red: 0.922, green: 0.796, blue: 0.545),
+        brightBlue:    Color(red: 0.506, green: 0.631, blue: 0.757),
+        brightMagenta: Color(red: 0.706, green: 0.557, blue: 0.678),
+        brightCyan:    Color(red: 0.565, green: 0.737, blue: 0.733),
+        brightWhite:   Color(red: 0.922, green: 0.937, blue: 0.957)
     )
 }

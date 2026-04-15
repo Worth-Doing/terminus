@@ -18,7 +18,7 @@ public struct UserSettings: Sendable, Codable {
     public init(
         defaultShell: String = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh",
         startupDirectory: String = "~",
-        theme: String = "defaultDark",
+        theme: String = "defaultLight",
         fontSize: Double = 14,
         fontFamily: String? = nil,
         scrollbackLimit: Int = 10_000,

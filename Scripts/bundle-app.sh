@@ -118,30 +118,48 @@ fi
 # Step 5: Notarization
 # ──────────────────────────────────────────────────
 if [ "$DO_NOTARIZE" = true ]; then
-    echo "[4/5] Creating DMG for notarization..."
+    echo "[4/5] Creating ZIP for notarization..."
 
-    # Create a temporary DMG
-    rm -f "$DMG_PATH"
-    hdiutil create -volname "$APP_NAME" \
-        -srcfolder "$BUNDLE_DIR" \
-        -ov -format UDZO \
-        "$DMG_PATH" 2>/dev/null
-
-    # Sign the DMG
-    codesign --force --sign "$SIGNING_IDENTITY" --timestamp "$DMG_PATH"
+    # Create a ZIP archive for notarization (Apple accepts .zip)
+    ZIP_PATH="$BUILD_DIR/$APP_NAME-$VERSION.zip"
+    rm -f "$ZIP_PATH"
+    ditto -c -k --keepParent "$BUNDLE_DIR" "$ZIP_PATH"
+    ZIP_SIZE=$(du -sh "$ZIP_PATH" | cut -f1)
+    echo "      ZIP: $ZIP_PATH ($ZIP_SIZE)"
 
     echo "[5/5] Submitting for notarization..."
-    xcrun notarytool submit "$DMG_PATH" \
+    xcrun notarytool submit "$ZIP_PATH" \
         --keychain-profile "$KEYCHAIN_PROFILE" \
         --wait
 
-    echo "      Stapling notarization ticket..."
-    xcrun stapler staple "$DMG_PATH"
+    echo "      Stapling notarization ticket to app bundle..."
+    xcrun stapler staple "$BUNDLE_DIR"
 
-    echo ""
-    echo "=== Build + Notarize complete ==="
-    echo ""
-    echo "  DMG: $DMG_PATH"
+    # Now create the final DMG with the stapled app
+    echo "      Creating distributable DMG..."
+    rm -f "$DMG_PATH"
+    ditto -c -k --keepParent "$BUNDLE_DIR" "$DMG_PATH.zip" 2>/dev/null || true
+
+    # Try hdiutil, fall back to keeping the ZIP
+    if hdiutil create -volname "$APP_NAME" \
+        -srcfolder "$BUNDLE_DIR" \
+        -ov -format UDZO \
+        "$DMG_PATH" 2>/dev/null; then
+        codesign --force --sign "$SIGNING_IDENTITY" --timestamp "$DMG_PATH"
+        xcrun stapler staple "$DMG_PATH" 2>/dev/null || true
+        DMG_SIZE=$(du -sh "$DMG_PATH" | cut -f1)
+        echo ""
+        echo "=== Build + Notarize complete ==="
+        echo ""
+        echo "  DMG: $DMG_PATH ($DMG_SIZE)"
+    else
+        echo ""
+        echo "=== Build + Notarize complete ==="
+        echo ""
+        echo "  ZIP: $ZIP_PATH ($ZIP_SIZE)"
+        echo "  (DMG creation skipped due to macOS permissions)"
+    fi
+    echo "  App: $BUNDLE_DIR (stapled)"
     echo ""
 else
     echo "[4/5] Skipping notarization (use --notarize to enable)"

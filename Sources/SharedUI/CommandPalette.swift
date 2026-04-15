@@ -39,14 +39,16 @@ public struct CommandPaletteItem: Identifiable {
 public struct CommandPaletteView: View {
     @Binding var isPresented: Bool
     let items: [CommandPaletteItem]
+    let theme: TerminusTheme
 
     @State private var query: String = ""
     @State private var selectedIndex: Int = 0
     @FocusState private var isSearchFocused: Bool
 
-    public init(isPresented: Binding<Bool>, items: [CommandPaletteItem]) {
+    public init(isPresented: Binding<Bool>, items: [CommandPaletteItem], theme: TerminusTheme) {
         self._isPresented = isPresented
         self.items = items
+        self.theme = theme
     }
 
     private var filteredItems: [CommandPaletteItem] {
@@ -72,12 +74,12 @@ public struct CommandPaletteView: View {
             HStack(spacing: TerminusDesign.spacingSM) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 14))
-                    .foregroundStyle(TerminusColors.textTertiary)
+                    .foregroundStyle(theme.chromeTextTertiary)
 
                 TextField("Type a command...", text: $query)
                     .textFieldStyle(.plain)
                     .font(.terminusUI(size: 15))
-                    .foregroundStyle(TerminusColors.textPrimary)
+                    .foregroundStyle(theme.chromeText)
                     .focused($isSearchFocused)
                     .onSubmit { executeSelected() }
 
@@ -85,7 +87,7 @@ public struct CommandPaletteView: View {
                     Button(action: { query = "" }) {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 12))
-                            .foregroundStyle(TerminusColors.textTertiary)
+                            .foregroundStyle(theme.chromeTextTertiary)
                     }
                     .buttonStyle(.plain)
                 }
@@ -94,7 +96,7 @@ public struct CommandPaletteView: View {
             .padding(.vertical, TerminusDesign.spacingMD)
 
             Divider()
-                .background(TerminusColors.divider)
+                .background(theme.chromeDivider)
 
             // Results
             if filteredItems.isEmpty {
@@ -102,7 +104,7 @@ public struct CommandPaletteView: View {
                     Spacer()
                     Text("No results")
                         .font(.terminusUI(size: 14))
-                        .foregroundStyle(TerminusColors.textTertiary)
+                        .foregroundStyle(theme.chromeTextTertiary)
                     Spacer()
                 }
                 .frame(height: 120)
@@ -112,10 +114,9 @@ public struct CommandPaletteView: View {
                         LazyVStack(alignment: .leading, spacing: 0) {
                             var globalIndex = 0
                             ForEach(groupedItems, id: \.0) { category, groupItems in
-                                // Category header
                                 Text(category.rawValue)
                                     .font(.terminusUI(size: 11, weight: .semibold))
-                                    .foregroundStyle(TerminusColors.textTertiary)
+                                    .foregroundStyle(theme.chromeTextTertiary)
                                     .textCase(.uppercase)
                                     .padding(.horizontal, TerminusDesign.spacingMD)
                                     .padding(.top, TerminusDesign.spacingSM)
@@ -127,7 +128,8 @@ public struct CommandPaletteView: View {
 
                                     CommandPaletteRow(
                                         item: item,
-                                        isSelected: currentIndex == selectedIndex
+                                        isSelected: currentIndex == selectedIndex,
+                                        theme: theme
                                     )
                                     .id(item.id)
                                     .onTapGesture {
@@ -151,7 +153,7 @@ public struct CommandPaletteView: View {
 
             // Footer hints
             Divider()
-                .background(TerminusColors.divider)
+                .background(theme.chromeDivider)
 
             HStack(spacing: TerminusDesign.spacingMD) {
                 keyHint("Return", label: "run")
@@ -164,12 +166,12 @@ public struct CommandPaletteView: View {
         .frame(width: 520)
         .background(
             RoundedRectangle(cornerRadius: TerminusDesign.radiusLG)
-                .fill(TerminusColors.sidebarBackground)
-                .shadow(color: .black.opacity(0.5), radius: 20, y: 8)
+                .fill(theme.chromeBackground)
+                .shadow(color: .black.opacity(theme.isDark ? 0.5 : 0.2), radius: 20, y: 8)
         )
         .overlay(
             RoundedRectangle(cornerRadius: TerminusDesign.radiusLG)
-                .stroke(TerminusColors.panelBorder, lineWidth: 1)
+                .stroke(theme.chromeBorder, lineWidth: 1)
         )
         .onAppear {
             isSearchFocused = true
@@ -203,16 +205,16 @@ public struct CommandPaletteView: View {
         HStack(spacing: 3) {
             Text(key)
                 .font(.terminusUI(size: 10, weight: .medium))
-                .foregroundStyle(TerminusColors.textTertiary)
+                .foregroundStyle(theme.chromeTextTertiary)
                 .padding(.horizontal, 4)
                 .padding(.vertical, 1)
                 .background(
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(Color.white.opacity(0.06))
+                        .fill(theme.chromeHover)
                 )
             Text(label)
                 .font(.terminusUI(size: 10))
-                .foregroundStyle(TerminusColors.textTertiary)
+                .foregroundStyle(theme.chromeTextTertiary)
         }
     }
 }
@@ -222,6 +224,7 @@ public struct CommandPaletteView: View {
 struct CommandPaletteRow: View {
     let item: CommandPaletteItem
     let isSelected: Bool
+    let theme: TerminusTheme
 
     var body: some View {
         HStack(spacing: TerminusDesign.spacingSM) {
@@ -229,7 +232,7 @@ struct CommandPaletteRow: View {
                 Image(systemName: icon)
                     .font(.system(size: 13))
                     .foregroundStyle(
-                        isSelected ? TerminusColors.accentPrimary : TerminusColors.textSecondary
+                        isSelected ? TerminusAccent.primary : theme.chromeTextSecondary
                     )
                     .frame(width: 20)
             }
@@ -237,13 +240,13 @@ struct CommandPaletteRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.title)
                     .font(.terminusUI(size: 13, weight: .medium))
-                    .foregroundStyle(TerminusColors.textPrimary)
+                    .foregroundStyle(theme.chromeText)
                     .lineLimit(1)
 
                 if let subtitle = item.subtitle {
                     Text(subtitle)
                         .font(.terminusMono(size: 11))
-                        .foregroundStyle(TerminusColors.textTertiary)
+                        .foregroundStyle(theme.chromeTextTertiary)
                         .lineLimit(1)
                 }
             }
@@ -254,7 +257,7 @@ struct CommandPaletteRow: View {
         .padding(.vertical, 6)
         .background(
             isSelected
-                ? TerminusColors.accentPrimary.opacity(0.15)
+                ? TerminusAccent.primary.opacity(0.15)
                 : Color.clear
         )
         .contentShape(Rectangle())

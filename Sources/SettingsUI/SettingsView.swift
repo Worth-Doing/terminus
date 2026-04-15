@@ -20,14 +20,14 @@ public struct SettingsView: View {
     @State private var settings: UserSettings = .defaults
 
     // Appearance
-    @State private var selectedThemeID: String = "defaultDark"
-    @State private var fontSize: Double = 14
-    @State private var fontFamily: String = "SF Mono"
+    @State private var selectedThemeID: String
+    @State private var fontSize: Double
+    @State private var fontFamily: String
     @State private var windowOpacity: Double = 1.0
     @State private var enableVibrancy: Bool = false
     @State private var cursorStyle: CursorStyle = .block
     @State private var cursorBlink: Bool = true
-    @State private var accentColorHue: Double = 0.6  // Blue
+    @State private var accentColorHue: Double = 0.6
 
     // AI
     @State private var apiKey: String = ""
@@ -36,6 +36,9 @@ public struct SettingsView: View {
     @State private var embeddingModel: String = DefaultModels.embedding.modelID
 
     private let secureStorage: SecureStorage
+    private let onThemeChanged: (String) -> Void
+    private let onFontSizeChanged: (Double) -> Void
+    private let onFontFamilyChanged: (String) -> Void
 
     private let availableFonts = [
         "SF Mono", "Menlo", "Monaco", "Courier New",
@@ -43,8 +46,27 @@ public struct SettingsView: View {
         "IBM Plex Mono", "Hack", "Cascadia Code",
     ]
 
-    public init(secureStorage: SecureStorage = SecureStorage()) {
+    public init(
+        secureStorage: SecureStorage = SecureStorage(),
+        currentThemeID: String = "defaultLight",
+        currentFontSize: Double = 14,
+        currentFontFamily: String = "SF Mono",
+        onThemeChanged: @escaping (String) -> Void = { _ in },
+        onFontSizeChanged: @escaping (Double) -> Void = { _ in },
+        onFontFamilyChanged: @escaping (String) -> Void = { _ in }
+    ) {
         self.secureStorage = secureStorage
+        self._selectedThemeID = State(initialValue: currentThemeID)
+        self._fontSize = State(initialValue: currentFontSize)
+        self._fontFamily = State(initialValue: currentFontFamily)
+        self.onThemeChanged = onThemeChanged
+        self.onFontSizeChanged = onFontSizeChanged
+        self.onFontFamilyChanged = onFontFamilyChanged
+    }
+
+    // Get the preview theme for settings
+    private var previewTheme: TerminusTheme {
+        TerminusTheme.theme(withID: selectedThemeID)
     }
 
     public var body: some View {
@@ -123,17 +145,46 @@ public struct SettingsView: View {
         VStack(alignment: .leading, spacing: TerminusDesign.spacingLG) {
             sectionHeader("Theme")
 
-            // Theme grid
+            // Light themes
+            Text("Light")
+                .font(.terminusUI(size: 11))
+                .foregroundStyle(.secondary)
+
             LazyVGrid(columns: [
                 GridItem(.flexible()),
                 GridItem(.flexible()),
                 GridItem(.flexible()),
             ], spacing: 10) {
-                ForEach(TerminusTheme.allThemes) { theme in
+                ForEach(TerminusTheme.allThemes.filter({ !$0.isDark })) { theme in
                     ThemePreviewCard(
                         theme: theme,
                         isSelected: selectedThemeID == theme.id,
-                        action: { selectedThemeID = theme.id }
+                        action: {
+                            selectedThemeID = theme.id
+                            onThemeChanged(theme.id)
+                        }
+                    )
+                }
+            }
+
+            // Dark themes
+            Text("Dark")
+                .font(.terminusUI(size: 11))
+                .foregroundStyle(.secondary)
+
+            LazyVGrid(columns: [
+                GridItem(.flexible()),
+                GridItem(.flexible()),
+                GridItem(.flexible()),
+            ], spacing: 10) {
+                ForEach(TerminusTheme.allThemes.filter({ $0.isDark })) { theme in
+                    ThemePreviewCard(
+                        theme: theme,
+                        isSelected: selectedThemeID == theme.id,
+                        action: {
+                            selectedThemeID = theme.id
+                            onThemeChanged(theme.id)
+                        }
                     )
                 }
             }
@@ -151,25 +202,31 @@ public struct SettingsView: View {
                     }
                 }
                 .frame(width: 200)
+                .onChange(of: fontFamily) { _, newValue in
+                    onFontFamilyChanged(newValue)
+                }
 
                 VStack(alignment: .leading) {
                     Text("Size: \(Int(fontSize))pt")
                         .font(.terminusUI(size: 12))
-                        .foregroundStyle(TerminusColors.textSecondary)
+                        .foregroundStyle(.secondary)
                     Slider(value: $fontSize, in: 10...28, step: 1)
                         .frame(width: 150)
+                        .onChange(of: fontSize) { _, newValue in
+                            onFontSizeChanged(newValue)
+                        }
                 }
             }
 
             // Font preview
             Text("The quick brown fox jumps over the lazy dog\n$ git commit -m \"fix: resolve login bug\" && git push")
                 .font(.custom(fontFamily, size: fontSize))
-                .foregroundStyle(TerminusColors.textPrimary)
+                .foregroundStyle(previewTheme.foregroundColor)
                 .padding(TerminusDesign.spacingMD)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: TerminusDesign.radiusMD)
-                        .fill(Color(red: 0.08, green: 0.08, blue: 0.10))
+                        .fill(previewTheme.backgroundColor)
                 )
 
             Divider()
@@ -180,7 +237,7 @@ public struct SettingsView: View {
                 VStack(alignment: .leading) {
                     Text("Opacity: \(Int(windowOpacity * 100))%")
                         .font(.terminusUI(size: 12))
-                        .foregroundStyle(TerminusColors.textSecondary)
+                        .foregroundStyle(.secondary)
                     Slider(value: $windowOpacity, in: 0.5...1.0, step: 0.05)
                         .frame(width: 200)
                 }
@@ -221,7 +278,10 @@ public struct SettingsView: View {
                         .fill(Color(hue: hue, saturation: 0.7, brightness: 0.9))
                         .frame(width: 24, height: 24)
                         .overlay(
-                            Circle().stroke(Color.white, lineWidth: accentColorHue == hue ? 2 : 0)
+                            Circle().stroke(
+                                accentColorHue == hue ? Color.primary : Color.clear,
+                                lineWidth: 2
+                            )
                         )
                         .onTapGesture { accentColorHue = hue }
                         .help(name)
@@ -238,7 +298,7 @@ public struct SettingsView: View {
 
             Text("Terminus injects OSC 133 hooks into your shell for command detection, exit code tracking, and directory monitoring.")
                 .font(.terminusUI(size: 12))
-                .foregroundStyle(TerminusColors.textSecondary)
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             sectionHeader("Environment")
@@ -249,18 +309,18 @@ public struct SettingsView: View {
                 Text("TERM_PROGRAM = Terminus")
             }
             .font(.terminusMono(size: 12))
-            .foregroundStyle(TerminusColors.textSecondary)
+            .foregroundStyle(.secondary)
             .padding(TerminusDesign.spacingSM)
             .background(
                 RoundedRectangle(cornerRadius: TerminusDesign.radiusSM)
-                    .fill(Color.white.opacity(0.03))
+                    .fill(Color.primary.opacity(0.03))
             )
 
             sectionHeader("Key Bindings")
 
             Text("Terminal keybindings follow standard xterm conventions. Special keys are translated to VT100/xterm escape sequences.")
                 .font(.terminusUI(size: 12))
-                .foregroundStyle(TerminusColors.textSecondary)
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -274,9 +334,9 @@ public struct SettingsView: View {
             if hasAPIKey {
                 HStack {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(TerminusColors.accentSuccess)
+                        .foregroundStyle(TerminusAccent.success)
                     Text("API key configured")
-                        .foregroundStyle(TerminusColors.textSecondary)
+                        .foregroundStyle(.secondary)
 
                     Spacer()
 
@@ -284,13 +344,13 @@ public struct SettingsView: View {
                         try? secureStorage.delete(key: SecureStorage.openRouterAPIKey)
                         hasAPIKey = false
                     }
-                    .foregroundStyle(TerminusColors.accentError)
+                    .foregroundStyle(TerminusAccent.error)
                 }
             } else {
                 VStack(alignment: .leading, spacing: TerminusDesign.spacingSM) {
                     Text("Enter your OpenRouter API key to enable AI features.")
                         .font(.terminusUI(size: 12))
-                        .foregroundStyle(TerminusColors.textSecondary)
+                        .foregroundStyle(.secondary)
 
                     HStack {
                         SecureField("sk-or-...", text: $apiKey)
@@ -333,7 +393,7 @@ public struct SettingsView: View {
 
             Text("AI features include: command explanation, natural language to command, semantic search over history, auto-generated saved command descriptions.")
                 .font(.terminusUI(size: 11))
-                .foregroundStyle(TerminusColors.textTertiary)
+                .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -371,7 +431,7 @@ public struct SettingsView: View {
     private func sectionHeader(_ title: String) -> some View {
         Text(title)
             .font(.terminusUI(size: 13, weight: .semibold))
-            .foregroundStyle(TerminusColors.textSecondary)
+            .foregroundStyle(.secondary)
             .textCase(.uppercase)
     }
 
@@ -389,16 +449,15 @@ public struct SettingsView: View {
         HStack {
             Text(action)
                 .font(.terminusUI(size: 13))
-                .foregroundStyle(TerminusColors.textPrimary)
             Spacer()
             Text(shortcut)
                 .font(.terminusMono(size: 11))
-                .foregroundStyle(TerminusColors.textTertiary)
+                .foregroundStyle(.tertiary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.white.opacity(0.05))
+                        .fill(Color.primary.opacity(0.05))
                 )
         }
     }
@@ -444,13 +503,13 @@ struct ThemePreviewCard: View {
 
             Text(theme.name)
                 .font(.terminusUI(size: 11))
-                .foregroundStyle(TerminusColors.textSecondary)
+                .foregroundStyle(.secondary)
                 .padding(.top, 4)
         }
         .padding(4)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(isSelected ? TerminusColors.accentPrimary : Color.clear, lineWidth: 2)
+                .stroke(isSelected ? TerminusAccent.primary : Color.clear, lineWidth: 2)
         )
         .onTapGesture(perform: action)
     }

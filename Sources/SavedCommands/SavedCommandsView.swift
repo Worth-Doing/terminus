@@ -6,6 +6,7 @@ import SharedUI
 
 public struct SavedCommandsSidebar: View {
     let commands: [SavedCommand]
+    let theme: TerminusTheme
     let onSelect: (SavedCommand) -> Void
     let onDelete: (SavedCommand) -> Void
     let onAdd: () -> Void
@@ -15,11 +16,13 @@ public struct SavedCommandsSidebar: View {
 
     public init(
         commands: [SavedCommand],
+        theme: TerminusTheme,
         onSelect: @escaping (SavedCommand) -> Void,
         onDelete: @escaping (SavedCommand) -> Void,
         onAdd: @escaping () -> Void
     ) {
         self.commands = commands
+        self.theme = theme
         self.onSelect = onSelect
         self.onDelete = onDelete
         self.onAdd = onAdd
@@ -54,14 +57,14 @@ public struct SavedCommandsSidebar: View {
             HStack {
                 Text("Saved Commands")
                     .font(.terminusUI(size: 13, weight: .semibold))
-                    .foregroundStyle(TerminusColors.textPrimary)
+                    .foregroundStyle(theme.chromeText)
 
                 Spacer()
 
                 Button(action: onAdd) {
                     Image(systemName: "plus")
                         .font(.system(size: 12))
-                        .foregroundStyle(TerminusColors.textSecondary)
+                        .foregroundStyle(theme.chromeTextSecondary)
                 }
                 .buttonStyle(.plain)
             }
@@ -72,7 +75,7 @@ public struct SavedCommandsSidebar: View {
             HStack(spacing: TerminusDesign.spacingXS) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 11))
-                    .foregroundStyle(TerminusColors.textTertiary)
+                    .foregroundStyle(theme.chromeTextTertiary)
 
                 TextField("Filter...", text: $searchText)
                     .textFieldStyle(.plain)
@@ -82,7 +85,7 @@ public struct SavedCommandsSidebar: View {
             .padding(.vertical, 5)
             .background(
                 RoundedRectangle(cornerRadius: TerminusDesign.radiusSM)
-                    .fill(Color.white.opacity(0.05))
+                    .fill(theme.chromeHover)
             )
             .padding(.horizontal, TerminusDesign.spacingMD)
             .padding(.bottom, TerminusDesign.spacingSM)
@@ -94,6 +97,7 @@ public struct SavedCommandsSidebar: View {
                         TagChip(
                             label: "All",
                             isSelected: selectedTag == nil,
+                            theme: theme,
                             action: { selectedTag = nil }
                         )
 
@@ -101,6 +105,7 @@ public struct SavedCommandsSidebar: View {
                             TagChip(
                                 label: tag,
                                 isSelected: selectedTag == tag,
+                                theme: theme,
                                 action: { selectedTag = selectedTag == tag ? nil : tag }
                             )
                         }
@@ -111,7 +116,7 @@ public struct SavedCommandsSidebar: View {
             }
 
             Divider()
-                .background(TerminusColors.divider)
+                .background(theme.chromeDivider)
 
             // Command list
             if filteredCommands.isEmpty {
@@ -119,10 +124,10 @@ public struct SavedCommandsSidebar: View {
                     Spacer()
                     Image(systemName: "bookmark")
                         .font(.system(size: 28))
-                        .foregroundStyle(TerminusColors.textTertiary)
+                        .foregroundStyle(theme.chromeTextTertiary)
                     Text(commands.isEmpty ? "No saved commands yet" : "No matches")
                         .font(.terminusUI(size: 13))
-                        .foregroundStyle(TerminusColors.textTertiary)
+                        .foregroundStyle(theme.chromeTextTertiary)
                     Spacer()
                 }
             } else {
@@ -131,6 +136,7 @@ public struct SavedCommandsSidebar: View {
                         ForEach(filteredCommands) { command in
                             SavedCommandRow(
                                 command: command,
+                                theme: theme,
                                 onSelect: { onSelect(command) },
                                 onDelete: { onDelete(command) }
                             )
@@ -141,7 +147,7 @@ public struct SavedCommandsSidebar: View {
             }
         }
         .frame(width: TerminusDesign.sidebarWidth)
-        .background(TerminusColors.sidebarBackground)
+        .background(theme.chromeBackground)
     }
 }
 
@@ -149,6 +155,7 @@ public struct SavedCommandsSidebar: View {
 
 struct SavedCommandRow: View {
     let command: SavedCommand
+    let theme: TerminusTheme
     let onSelect: () -> Void
     let onDelete: () -> Void
 
@@ -159,7 +166,7 @@ struct SavedCommandRow: View {
             HStack {
                 Text(command.name)
                     .font(.terminusUI(size: 13, weight: .medium))
-                    .foregroundStyle(TerminusColors.textPrimary)
+                    .foregroundStyle(theme.chromeText)
                     .lineLimit(1)
 
                 Spacer()
@@ -168,7 +175,7 @@ struct SavedCommandRow: View {
                     Button(action: onDelete) {
                         Image(systemName: "trash")
                             .font(.system(size: 10))
-                            .foregroundStyle(TerminusColors.textTertiary)
+                            .foregroundStyle(theme.chromeTextTertiary)
                     }
                     .buttonStyle(.plain)
                 }
@@ -176,7 +183,7 @@ struct SavedCommandRow: View {
 
             Text(command.commandTemplate)
                 .font(.terminusMono(size: 11))
-                .foregroundStyle(TerminusColors.accentPrimary.opacity(0.8))
+                .foregroundStyle(TerminusAccent.primary.opacity(0.8))
                 .lineLimit(2)
 
             if !command.tags.isEmpty {
@@ -184,11 +191,11 @@ struct SavedCommandRow: View {
                     ForEach(command.tags, id: \.self) { tag in
                         Text(tag)
                             .font(.terminusUI(size: 9, weight: .medium))
-                            .foregroundStyle(TerminusColors.textTertiary)
+                            .foregroundStyle(theme.chromeTextTertiary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(
-                                Capsule().fill(Color.white.opacity(0.06))
+                                Capsule().fill(theme.chromeHover)
                             )
                     }
                 }
@@ -196,11 +203,7 @@ struct SavedCommandRow: View {
         }
         .padding(.horizontal, TerminusDesign.spacingMD)
         .padding(.vertical, TerminusDesign.spacingSM)
-        .background(
-            isHovering
-                ? Color.white.opacity(0.04)
-                : Color.clear
-        )
+        .background(isHovering ? theme.chromeHover : Color.clear)
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
         .onHover { isHovering = $0 }
@@ -212,6 +215,7 @@ struct SavedCommandRow: View {
 struct TagChip: View {
     let label: String
     let isSelected: Bool
+    let theme: TerminusTheme
     let action: () -> Void
 
     var body: some View {
@@ -219,15 +223,15 @@ struct TagChip: View {
             Text(label)
                 .font(.terminusUI(size: 11, weight: isSelected ? .semibold : .regular))
                 .foregroundStyle(
-                    isSelected ? TerminusColors.accentPrimary : TerminusColors.textSecondary
+                    isSelected ? TerminusAccent.primary : theme.chromeTextSecondary
                 )
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(
                     Capsule().fill(
                         isSelected
-                            ? TerminusColors.accentPrimary.opacity(0.15)
-                            : Color.white.opacity(0.05)
+                            ? TerminusAccent.primary.opacity(0.15)
+                            : theme.chromeHover
                     )
                 )
         }
@@ -240,6 +244,7 @@ struct TagChip: View {
 public struct SaveCommandSheet: View {
     @Binding var isPresented: Bool
     let initialCommand: String
+    let theme: TerminusTheme
     let onSave: (SavedCommand) -> Void
 
     @State private var name: String = ""
@@ -250,10 +255,12 @@ public struct SaveCommandSheet: View {
     public init(
         isPresented: Binding<Bool>,
         initialCommand: String,
+        theme: TerminusTheme,
         onSave: @escaping (SavedCommand) -> Void
     ) {
         self._isPresented = isPresented
         self.initialCommand = initialCommand
+        self.theme = theme
         self.onSave = onSave
         self._commandTemplate = State(initialValue: initialCommand)
     }
@@ -262,12 +269,12 @@ public struct SaveCommandSheet: View {
         VStack(alignment: .leading, spacing: TerminusDesign.spacingMD) {
             Text("Save Command")
                 .font(.terminusUI(size: 18, weight: .semibold))
-                .foregroundStyle(TerminusColors.textPrimary)
+                .foregroundStyle(theme.chromeText)
 
             VStack(alignment: .leading, spacing: TerminusDesign.spacingSM) {
                 Text("Name")
                     .font(.terminusUI(size: 12, weight: .medium))
-                    .foregroundStyle(TerminusColors.textSecondary)
+                    .foregroundStyle(theme.chromeTextSecondary)
                 TextField("e.g., Deploy to staging", text: $name)
                     .textFieldStyle(.roundedBorder)
             }
@@ -275,20 +282,20 @@ public struct SaveCommandSheet: View {
             VStack(alignment: .leading, spacing: TerminusDesign.spacingSM) {
                 Text("Command")
                     .font(.terminusUI(size: 12, weight: .medium))
-                    .foregroundStyle(TerminusColors.textSecondary)
+                    .foregroundStyle(theme.chromeTextSecondary)
                 TextField("Command template", text: $commandTemplate)
                     .font(.terminusMono(size: 13))
                     .textFieldStyle(.roundedBorder)
 
                 Text("Use {{param}} for parameters")
                     .font(.terminusUI(size: 11))
-                    .foregroundStyle(TerminusColors.textTertiary)
+                    .foregroundStyle(theme.chromeTextTertiary)
             }
 
             VStack(alignment: .leading, spacing: TerminusDesign.spacingSM) {
                 Text("Description (optional)")
                     .font(.terminusUI(size: 12, weight: .medium))
-                    .foregroundStyle(TerminusColors.textSecondary)
+                    .foregroundStyle(theme.chromeTextSecondary)
                 TextField("What does this command do?", text: $description)
                     .textFieldStyle(.roundedBorder)
             }
@@ -296,7 +303,7 @@ public struct SaveCommandSheet: View {
             VStack(alignment: .leading, spacing: TerminusDesign.spacingSM) {
                 Text("Tags (comma-separated)")
                     .font(.terminusUI(size: 12, weight: .medium))
-                    .foregroundStyle(TerminusColors.textSecondary)
+                    .foregroundStyle(theme.chromeTextSecondary)
                 TextField("e.g., git, deploy, docker", text: $tagsInput)
                     .textFieldStyle(.roundedBorder)
             }
@@ -314,13 +321,13 @@ public struct SaveCommandSheet: View {
                 }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
-                .tint(TerminusColors.accentPrimary)
+                .tint(TerminusAccent.primary)
                 .disabled(name.isEmpty || commandTemplate.isEmpty)
             }
         }
         .padding(TerminusDesign.spacingXL)
         .frame(width: 450)
-        .background(TerminusColors.sidebarBackground)
+        .background(theme.chromeBackground)
     }
 
     private func save() {
@@ -329,7 +336,6 @@ public struct SaveCommandSheet: View {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
 
-        // Parse parameters from template
         let paramNames = parseParameters(from: commandTemplate)
         let params = paramNames.map { ParameterDefinition(name: $0) }
 

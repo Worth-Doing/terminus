@@ -64,7 +64,7 @@ public struct TerminalNSViewRepresentable: NSViewRepresentable {
 public class TerminalNSView: NSView, @preconcurrency NSTextInputClient {
     weak var inputHandler: (any TerminalInputHandler)?
     var terminalBuffer: TerminalBuffer?
-    var theme: TerminusTheme = .defaultDark
+    var theme: TerminusTheme = .defaultLight
     var renderGeneration: UInt64 = 0
 
     private var _markedText: NSMutableAttributedString = NSMutableAttributedString()

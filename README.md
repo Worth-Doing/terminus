@@ -35,7 +35,7 @@
 
 ## Download
 
-**[Download Terminus-0.1.0.dmg](https://github.com/Worth-Doing/terminus/releases/latest)**
+**[Download Terminus-0.1.0.zip](https://github.com/Worth-Doing/terminus/releases/latest)**
 
 > Signed and notarized by Apple. Runs on macOS 14+ (Sonoma and later), Apple Silicon & Intel.
 
@@ -123,13 +123,19 @@ This is not a chatbot stuffed into a terminal. The terminal works fully offline 
 - API key stored in macOS Keychain
 - Models configurable (default: Claude Sonnet for chat, text-embedding-3-small for embeddings)
 
-### Appearance Customization
-- 3 built-in themes: Terminus Dark, Solarized Dark, Dracula
+### Appearance & Theming
+- 6 built-in themes with light & dark variants:
+  - **Light:** Terminus Light (default), Solarized Light
+  - **Dark:** Terminus Dark, Solarized Dark, Dracula, Nord
+- Adaptive UI chrome — toolbar, sidebar, panels, overlays all follow the active theme
+- Automatic macOS appearance integration (light/dark mode via `preferredColorScheme`)
+- Theme switching via Settings or Command Palette
 - Font picker: SF Mono, Menlo, JetBrains Mono, Fira Code, and more
 - Font size slider (10pt — 28pt)
 - Window opacity control
 - Cursor style: block, underline, bar (with blink)
 - Accent color presets
+- Settings persist across sessions (UserDefaults)
 
 ---
 
@@ -162,11 +168,11 @@ This is not a chatbot stuffed into a terminal. The terminal works fully offline 
 
 | Module | Purpose |
 |--------|---------|
-| `Terminus` | App entry point |
+| `Terminus` | App entry point, main view, toolbar, tabs |
 | `SharedModels` | All data types |
 | `DataStore` | SQLite wrapper + schema |
 | `SecureStorage` | Keychain wrapper |
-| `SharedUI` | Theme, design system, command palette |
+| `SharedUI` | Theme system, design tokens, command palette |
 | `TerminalCore` | PTY lifecycle (forkpty) |
 | `TerminalEmulator` | VT100 parser + buffer + shell integration |
 | `TerminalUI` | NSView rendering + input |
@@ -207,7 +213,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 # Build signed .app bundle
 ./Scripts/bundle-app.sh --sign
 
-# Build signed + Apple notarized DMG
+# Build signed + Apple notarized
 ./Scripts/bundle-app.sh --notarize
 ```
 
@@ -218,12 +224,11 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | Metric | Value |
 |--------|-------|
 | Swift files | 30 |
-| Lines of code | 8,420 |
+| Lines of code | 8,725 |
 | Modules | 17 |
-| Tests | 35 |
+| Themes | 6 (2 light, 4 dark) |
 | External dependencies | 0 |
-| Binary size | 3.1 MB |
-| DMG size | ~2 MB |
+| Binary size | 3.2 MB |
 
 ---
 
@@ -233,10 +238,11 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 - [ ] Sixel image protocol
 - [ ] tmux integration
 - [ ] Plugin system
-- [ ] Custom theme editor
+- [ ] Custom theme editor / theme import
 - [ ] Command workflow automation
 - [ ] iCloud sync for saved commands
-- [ ] Touch Bar support
+- [ ] Mouse reporting (SGR mode)
+- [ ] Hyperlink support (OSC 8)
 
 ---
 

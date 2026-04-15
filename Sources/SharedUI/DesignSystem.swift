@@ -44,19 +44,33 @@ extension Font {
     }
 }
 
-// MARK: - UI Colors (non-terminal)
+// MARK: - Accent Colors (theme-independent)
+
+public enum TerminusAccent {
+    public static let primary = Color(red: 0.25, green: 0.48, blue: 0.85)
+    public static let success = Color(red: 0.25, green: 0.72, blue: 0.38)
+    public static let warning = Color(red: 0.85, green: 0.65, blue: 0.15)
+    public static let error = Color(red: 0.85, green: 0.25, blue: 0.25)
+}
+
+// MARK: - UI Colors (resolved from active theme)
+// These are kept as static for backward compatibility,
+// but all new code should use theme.chrome* properties.
 
 public enum TerminusColors {
+    // These properties provide dark-mode defaults for views that
+    // haven't yet been migrated to theme-aware colors.
+    // They are used as fallback only.
     public static let panelBorder = Color.white.opacity(0.08)
     public static let panelBorderFocused = Color.blue.opacity(0.5)
     public static let divider = Color.white.opacity(0.06)
     public static let sidebarBackground = Color(red: 0.10, green: 0.10, blue: 0.12)
     public static let toolbarBackground = Color(red: 0.12, green: 0.12, blue: 0.14)
     public static let overlayBackground = Color.black.opacity(0.6)
-    public static let accentPrimary = Color(red: 0.40, green: 0.65, blue: 1.0)
-    public static let accentSuccess = Color(red: 0.35, green: 0.82, blue: 0.47)
-    public static let accentWarning = Color(red: 0.95, green: 0.80, blue: 0.35)
-    public static let accentError = Color(red: 0.91, green: 0.35, blue: 0.35)
+    public static let accentPrimary = TerminusAccent.primary
+    public static let accentSuccess = TerminusAccent.success
+    public static let accentWarning = TerminusAccent.warning
+    public static let accentError = TerminusAccent.error
     public static let textPrimary = Color(red: 0.90, green: 0.91, blue: 0.93)
     public static let textSecondary = Color(red: 0.55, green: 0.56, blue: 0.60)
     public static let textTertiary = Color(red: 0.35, green: 0.36, blue: 0.40)
