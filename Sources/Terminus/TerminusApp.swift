@@ -29,6 +29,8 @@ struct ServiceContainer {
     let savedCommandsManager: SavedCommandsManager?
     let aiService: AIServiceClient?
     let embeddingPipeline: EmbeddingPipeline?
+    let nlPipeline: NLCommandPipeline?
+    let commandIntelligence: CommandIntelligence?
 
     init() {
         do {
@@ -41,6 +43,8 @@ struct ServiceContainer {
             let ai = AIServiceClient(secureStorage: secureStorage)
             self.aiService = ai
             self.embeddingPipeline = EmbeddingPipeline(aiService: ai, dataAccess: da)
+            self.nlPipeline = NLCommandPipeline(aiService: ai)
+            self.commandIntelligence = CommandIntelligence(aiService: ai)
         } catch {
             print("Failed to initialize database: \(error)")
             self.dataAccess = nil
@@ -49,6 +53,8 @@ struct ServiceContainer {
             self.savedCommandsManager = nil
             self.aiService = nil
             self.embeddingPipeline = nil
+            self.nlPipeline = nil
+            self.commandIntelligence = nil
         }
     }
 }
@@ -77,6 +83,7 @@ final class AppState {
     var savedCommandsManager: SavedCommandsManager? { services.savedCommandsManager }
     var aiService: AIServiceClient? { services.aiService }
     var embeddingPipeline: EmbeddingPipeline? { services.embeddingPipeline }
+    var nlPipeline: NLCommandPipeline? { services.nlPipeline }
 
     // UI state
     var showSidebar: Bool = false
@@ -87,6 +94,48 @@ final class AppState {
     var savedCommands: [SavedCommand] = []
     var semanticSearchResults: [(String, Float)] = []
     var semanticSearchQuery: String = ""
+
+    // AI state
+    var showNLBar: Bool = false
+    var nlInput: String = ""
+    var isAIProcessing: Bool = false
+    var currentAIResponse: NLCommandResponse?
+    var aiResponses: [NLCommandResponse] = []
+    var blockManagers: [SessionID: BlockManager] = [:]
+
+    // New feature state
+    var showHistoryPanel: Bool = false
+    var showFileExplorer: Bool = false
+    var showWorkflowEditor: Bool = false
+    var historyEntries: [CommandEntry] = []
+    var favoriteCommands: Set<String> = []
+    var workflows: [WorkflowSequence] = []
+    let workflowRunner = WorkflowRunner()
+    var fileExplorerState = FileExplorerState()
+    var commandExplanation: CommandExplanation?
+    var isExplaining: Bool = false
+    var errorRecoverySuggestion: NLCommandResponse?
+    var lastFailedCommand: String?
+    var lastFailedOutput: String?
+
+    // AI availability — enabled automatically when API key exists
+    var isAIAvailable: Bool {
+        (try? secureStorage.exists(key: SecureStorage.openRouterAPIKey)) ?? false
+    }
+
+    var currentChatModel: ModelConfiguration {
+        let modelID = UserDefaults.standard.string(forKey: "terminus.ai.chatModel") ?? DefaultModels.chat.modelID
+        let temp = UserDefaults.standard.object(forKey: "terminus.ai.temperature") as? Double ?? 0.7
+        let tokens = UserDefaults.standard.object(forKey: "terminus.ai.maxTokens") as? Int ?? 4096
+        return ModelConfiguration(
+            id: "user-chat",
+            provider: "openrouter",
+            modelID: modelID,
+            purpose: .chat,
+            maxTokens: tokens,
+            temperature: temp
+        )
+    }
 
     init() {
         self.hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
@@ -105,6 +154,9 @@ final class AppState {
         if let savedFontFamily = UserDefaults.standard.string(forKey: "terminus.fontFamily") {
             self.settings.fontFamily = savedFontFamily
             self.theme.fontFamily = savedFontFamily
+        }
+        if UserDefaults.standard.object(forKey: "terminus.enableAI") != nil {
+            self.settings.enableAI = UserDefaults.standard.bool(forKey: "terminus.enableAI")
         }
 
         // Load saved commands
@@ -170,7 +222,12 @@ final class AppState {
 
         let controller = TerminalSessionController(session: session)
 
-        // Wire command completion to history engine + n-gram recording
+        // Ensure block manager exists for this session
+        if blockManagers[sessionID] == nil {
+            blockManagers[sessionID] = BlockManager()
+        }
+
+        // Wire command completion to history engine + n-gram recording + block manager
         controller.onCommandCompleted = { [weak self] command, exitCode, directory in
             guard let self, let historyEngine = self.historyEngine else { return }
 
@@ -200,6 +257,16 @@ final class AppState {
                     gramSize: 2,
                     directory: directory
                 )
+            }
+
+            // Update NL pipeline context
+            Task {
+                await self.nlPipeline?.updateContext(
+                    directory: directory,
+                    recentCommand: command,
+                    output: nil
+                )
+                await self.nlPipeline?.updateProjectType(projectType)
             }
         }
 
@@ -234,6 +301,7 @@ final class AppState {
                     Task { await controller.stop() }
                     controllers.removeValue(forKey: sessionID)
                 }
+                blockManagers.removeValue(forKey: sessionID)
             }
             workspaces.removeValue(forKey: tab.workspaceID)
         }
@@ -260,6 +328,7 @@ final class AppState {
                         Task { await controller.stop() }
                         controllers.removeValue(forKey: sessionID)
                     }
+                    blockManagers.removeValue(forKey: sessionID)
                 }
             }
         } else if windowState.tabs.count > 1 {
@@ -303,6 +372,228 @@ final class AppState {
         }
     }
 
+    // MARK: - AI / NL Command System
+
+    func processNLInput(_ input: String, intent: InputIntent) {
+        let ws = activeWorkspace
+        let leaves = ws.allLeaves(in: ws.root)
+        guard let focused = leaves.first(where: { $0.id == ws.focusedPanelID }),
+              let controller = controllers[focused.sessionID] else { return }
+
+        if intent == .rawCommand {
+            // Send directly to terminal
+            Task {
+                await controller.sendString(input + "\n")
+            }
+            return
+        }
+
+        // Natural language processing
+        guard let pipeline = nlPipeline else { return }
+
+        isAIProcessing = true
+        currentAIResponse = nil
+
+        let directory = controller.currentDirectory
+        let previousCmds = controller.previousCommand.map { [$0] } ?? []
+        let projectType = ProjectDetector.detect(directory: directory)
+
+        Task {
+            do {
+                let request = NLCommandRequest(
+                    query: input,
+                    currentDirectory: directory,
+                    shell: controller.session.shell,
+                    previousCommands: previousCmds,
+                    projectType: projectType
+                )
+
+                let response = try await pipeline.generateCommand(
+                    from: request,
+                    model: currentChatModel
+                )
+
+                await MainActor.run {
+                    self.currentAIResponse = response
+                    self.aiResponses.append(response)
+                    self.isAIProcessing = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.isAIProcessing = false
+                }
+            }
+        }
+    }
+
+    func executeAICommand(_ command: String) {
+        let ws = activeWorkspace
+        let leaves = ws.allLeaves(in: ws.root)
+        guard let focused = leaves.first(where: { $0.id == ws.focusedPanelID }),
+              let controller = controllers[focused.sessionID] else { return }
+
+        currentAIResponse = nil
+
+        Task {
+            await controller.sendString(command + "\n")
+        }
+    }
+
+    func dismissAIResponse() {
+        currentAIResponse = nil
+    }
+
+    func copyToClipboard(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    // MARK: - Predictions
+
+    func fetchPredictions(prefix: String, sessionID: SessionID) -> [Prediction] {
+        guard let controller = controllers[sessionID],
+              let engine = predictionEngine else { return [] }
+
+        let directory = controller.currentDirectory
+        let projectType = ProjectDetector.detect(directory: directory)
+
+        return (try? engine.predict(
+            prefix: prefix,
+            currentDirectory: directory,
+            previousCommand: controller.previousCommand,
+            projectType: projectType,
+            limit: 8
+        )) ?? []
+    }
+
+    // MARK: - History
+
+    func loadHistory() {
+        historyEntries = (try? historyEngine?.recentCommands(limit: 200)) ?? []
+    }
+
+    func toggleFavorite(_ command: String) {
+        if favoriteCommands.contains(command) {
+            favoriteCommands.remove(command)
+        } else {
+            favoriteCommands.insert(command)
+        }
+        // Persist favorites
+        UserDefaults.standard.set(Array(favoriteCommands), forKey: "terminus.favorites")
+    }
+
+    func loadFavorites() {
+        if let saved = UserDefaults.standard.array(forKey: "terminus.favorites") as? [String] {
+            favoriteCommands = Set(saved)
+        }
+    }
+
+    // MARK: - Command Intelligence
+
+    func explainCurrentCommand(_ command: String) {
+        guard let intelligence = services.commandIntelligence else { return }
+        isExplaining = true
+
+        Task {
+            do {
+                let explanation = try await intelligence.explainCommand(command, model: currentChatModel)
+                await MainActor.run {
+                    self.commandExplanation = explanation
+                    self.isExplaining = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.isExplaining = false
+                }
+            }
+        }
+    }
+
+    func dismissExplanation() {
+        commandExplanation = nil
+    }
+
+    // MARK: - Error Recovery
+
+    func suggestErrorFix(command: String, exitCode: Int32, output: String) {
+        guard let pipeline = nlPipeline else { return }
+        lastFailedCommand = command
+        lastFailedOutput = output
+
+        Task {
+            do {
+                let response = try await pipeline.suggestFix(
+                    command: command,
+                    exitCode: exitCode,
+                    output: output,
+                    model: currentChatModel
+                )
+                await MainActor.run {
+                    self.errorRecoverySuggestion = response
+                }
+            } catch {
+                // Silently fail - error recovery is best-effort
+            }
+        }
+    }
+
+    func dismissErrorRecovery() {
+        errorRecoverySuggestion = nil
+        lastFailedCommand = nil
+        lastFailedOutput = nil
+    }
+
+    // MARK: - File Explorer
+
+    func updateFileExplorer(directory: String) {
+        fileExplorerState.loadDirectory(directory)
+    }
+
+    func insertPathInTerminal(_ path: String) {
+        insertCommandString(path)
+    }
+
+    func cdToDirectory(_ path: String) {
+        insertCommandString("cd \"\(path)\"\n")
+    }
+
+    // MARK: - Workflows
+
+    func loadWorkflows() {
+        // Workflows stored in UserDefaults as JSON for now
+        if let data = UserDefaults.standard.data(forKey: "terminus.workflows"),
+           let decoded = try? JSONDecoder().decode([WorkflowSequence].self, from: data) {
+            workflows = decoded
+        }
+    }
+
+    func saveWorkflow(_ workflow: WorkflowSequence) {
+        if let index = workflows.firstIndex(where: { $0.id == workflow.id }) {
+            workflows[index] = workflow
+        } else {
+            workflows.append(workflow)
+        }
+        persistWorkflows()
+    }
+
+    func deleteWorkflow(_ workflow: WorkflowSequence) {
+        workflows.removeAll { $0.id == workflow.id }
+        persistWorkflows()
+    }
+
+    func runWorkflow(_ workflow: WorkflowSequence) {
+        workflowRunner.start(workflow)
+        if let step = workflowRunner.currentStep {
+            executeAICommand(step.command)
+        }
+    }
+
+    private func persistWorkflows() {
+        if let data = try? JSONEncoder().encode(workflows) {
+            UserDefaults.standard.set(data, forKey: "terminus.workflows")
+        }
+    }
+
     // MARK: - Command Palette Items
 
     func buildPaletteItems() -> [CommandPaletteItem] {
@@ -335,6 +626,35 @@ final class AppState {
         items.append(CommandPaletteItem(
             title: "Save Current Command", icon: "bookmark.fill", category: .action,
             action: { [weak self] in self?.showSaveCommandSheet = true }
+        ))
+
+        // AI command
+        if isAIAvailable {
+            items.append(CommandPaletteItem(
+                title: "AI Command Bar", icon: "sparkles", category: .action,
+                action: { [weak self] in self?.showNLBar.toggle() }
+            ))
+        }
+
+        // New feature toggles
+        items.append(CommandPaletteItem(
+            title: "Command History", icon: "clock.arrow.circlepath", category: .action,
+            action: { [weak self] in
+                self?.loadHistory()
+                self?.showHistoryPanel.toggle()
+            }
+        ))
+        items.append(CommandPaletteItem(
+            title: "File Explorer", icon: "folder", category: .action,
+            action: { [weak self] in self?.showFileExplorer.toggle() }
+        ))
+        items.append(CommandPaletteItem(
+            title: "Workflows", icon: "arrow.triangle.2.circlepath.circle", category: .action,
+            action: { [weak self] in self?.showSidebar = true }
+        ))
+        items.append(CommandPaletteItem(
+            title: "System Monitor", icon: "gauge.with.dots.needle.33percent", category: .action,
+            action: { [weak self] in self?.showMetrics.toggle() }
         ))
 
         // Theme switching
@@ -459,6 +779,11 @@ struct TerminusCommands: Commands {
             }
             .keyboardShortcut("p", modifiers: [.command, .shift])
 
+            Button("AI Command Bar") {
+                appState.showNLBar.toggle()
+            }
+            .keyboardShortcut("l", modifiers: .command)
+
             Button("Semantic Search") {
                 appState.showSemanticSearch.toggle()
             }
@@ -473,6 +798,17 @@ struct TerminusCommands: Commands {
                 appState.showMetrics.toggle()
             }
             .keyboardShortcut("m", modifiers: [.command, .shift])
+
+            Button("Command History") {
+                appState.loadHistory()
+                appState.showHistoryPanel.toggle()
+            }
+            .keyboardShortcut("y", modifiers: .command)
+
+            Button("File Explorer") {
+                appState.showFileExplorer.toggle()
+            }
+            .keyboardShortcut("e", modifiers: [.command, .shift])
 
             Divider()
 
@@ -544,9 +880,16 @@ struct MainView: View {
                             .frame(height: 1)
                     }
 
+                // Workflow progress bar
+                WorkflowProgressView(
+                    runner: appState.workflowRunner,
+                    theme: theme,
+                    onStop: { appState.workflowRunner.stop() }
+                )
+
                 // Main content area
                 HStack(spacing: 0) {
-                    // System metrics panel (left) — glass sidebar
+                    // Left panels stack
                     if appState.showMetrics {
                         MetricsPanel(theme: theme)
                             .glassBackground(isDark: theme.isDark)
@@ -558,13 +901,135 @@ struct MainView: View {
                             .transition(.move(edge: .leading).combined(with: .opacity))
                     }
 
-                    // Panel workspace
-                    PanelTreeView(
-                        node: appState.activeWorkspace.root,
-                        appState: appState
-                    )
+                    if appState.showFileExplorer {
+                        FileExplorerPanel(
+                            state: appState.fileExplorerState,
+                            theme: theme,
+                            onInsertPath: { appState.insertPathInTerminal($0) },
+                            onCdTo: { appState.cdToDirectory($0) }
+                        )
+                        .glassBackground(isDark: theme.isDark)
+                        .overlay(alignment: .trailing) {
+                            Rectangle().fill(theme.chromeDivider).frame(width: 0.5)
+                        }
+                        .terminusShadow(.soft)
+                        .zIndex(1)
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                    }
 
-                    // Saved commands sidebar (right) — glass sidebar
+                    // Panel workspace
+                    VStack(spacing: 0) {
+                        PanelTreeView(
+                            node: appState.activeWorkspace.root,
+                            appState: appState
+                        )
+
+                        // Error recovery suggestion
+                        if let errorSuggestion = appState.errorRecoverySuggestion {
+                            AICommandBlockView(
+                                response: errorSuggestion,
+                                theme: theme,
+                                onRun: { cmd in
+                                    appState.dismissErrorRecovery()
+                                    appState.executeAICommand(cmd)
+                                },
+                                onEdit: { cmd in
+                                    appState.nlInput = cmd
+                                    appState.dismissErrorRecovery()
+                                    appState.showNLBar = true
+                                },
+                                onCopy: { appState.copyToClipboard($0) },
+                                onReject: { appState.dismissErrorRecovery() }
+                            )
+                            .padding(.horizontal, TerminusDesign.spacingMD)
+                            .padding(.vertical, TerminusDesign.spacingSM)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+
+                        // AI Response overlay (above the NL bar)
+                        if let response = appState.currentAIResponse {
+                            AICommandBlockView(
+                                response: response,
+                                theme: theme,
+                                onRun: { appState.executeAICommand($0) },
+                                onEdit: { command in
+                                    appState.nlInput = command
+                                    appState.currentAIResponse = nil
+                                },
+                                onCopy: { appState.copyToClipboard($0) },
+                                onReject: { appState.dismissAIResponse() }
+                            )
+                            .padding(.horizontal, TerminusDesign.spacingMD)
+                            .padding(.vertical, TerminusDesign.spacingSM)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+
+                        // Command explanation overlay
+                        if let explanation = appState.commandExplanation {
+                            CommandExplanationView(
+                                explanation: explanation,
+                                theme: theme,
+                                onDismiss: { appState.dismissExplanation() }
+                            )
+                            .padding(.horizontal, TerminusDesign.spacingMD)
+                            .padding(.vertical, TerminusDesign.spacingSM)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+
+                        // NL Input Bar (always visible at bottom when toggled)
+                        if appState.showNLBar {
+                            NLInputBar(
+                                text: $appState.nlInput,
+                                theme: theme,
+                                isAIAvailable: appState.isAIAvailable,
+                                isProcessing: appState.isAIProcessing,
+                                currentModel: appState.currentChatModel.modelID,
+                                suggestions: appState.fetchPredictions(
+                                    prefix: appState.nlInput,
+                                    sessionID: focusedSessionID
+                                ),
+                                onSubmit: { text, intent in
+                                    appState.processNLInput(text, intent: intent)
+                                },
+                                onCancel: {
+                                    appState.isAIProcessing = false
+                                    appState.currentAIResponse = nil
+                                }
+                            )
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+                    }
+
+                    // Right panels: History, Saved Commands
+                    if appState.showHistoryPanel {
+                        HistoryPanelView(
+                            entries: appState.historyEntries,
+                            favorites: appState.favoriteCommands,
+                            theme: theme,
+                            onSelect: { cmd in
+                                appState.insertCommandString(cmd)
+                            },
+                            onRerun: { cmd in
+                                appState.insertCommandString(cmd + "\n")
+                            },
+                            onToggleFavorite: { appState.toggleFavorite($0) },
+                            onSearch: { query in
+                                if query.isEmpty {
+                                    appState.loadHistory()
+                                } else {
+                                    appState.historyEntries = (try? appState.historyEngine?.search(query: query, limit: 200)) ?? []
+                                }
+                            }
+                        )
+                        .glassBackground(isDark: theme.isDark)
+                        .overlay(alignment: .leading) {
+                            Rectangle().fill(theme.chromeDivider).frame(width: 0.5)
+                        }
+                        .terminusShadow(.soft)
+                        .zIndex(1)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
+
                     if appState.showSidebar {
                         SavedCommandsSidebar(
                             commands: appState.savedCommands,
@@ -641,8 +1106,14 @@ struct MainView: View {
         }
         .animation(TerminusDesign.springDefault, value: appState.showSidebar)
         .animation(TerminusDesign.springDefault, value: appState.showMetrics)
+        .animation(TerminusDesign.springDefault, value: appState.showHistoryPanel)
+        .animation(TerminusDesign.springDefault, value: appState.showFileExplorer)
         .animation(TerminusDesign.springSnappy, value: appState.showCommandPalette)
         .animation(TerminusDesign.springSnappy, value: appState.showSemanticSearch)
+        .animation(TerminusDesign.springSnappy, value: appState.showNLBar)
+        .animation(TerminusDesign.springDefault, value: appState.currentAIResponse?.id)
+        .animation(TerminusDesign.springSnappy, value: appState.errorRecoverySuggestion?.id)
+        .animation(TerminusDesign.springSnappy, value: appState.commandExplanation?.command)
         .sheet(isPresented: $appState.showSaveCommandSheet) {
             SaveCommandSheet(
                 isPresented: $appState.showSaveCommandSheet,
@@ -651,6 +1122,12 @@ struct MainView: View {
                 onSave: { appState.saveCommand($0) }
             )
         }
+    }
+
+    private var focusedSessionID: SessionID {
+        let ws = appState.activeWorkspace
+        let leaves = ws.allLeaves(in: ws.root)
+        return leaves.first(where: { $0.id == ws.focusedPanelID })?.sessionID ?? ""
     }
 
     private func performSemanticSearch(_ query: String) async {
@@ -1046,81 +1523,97 @@ struct TerminusToolbar: View {
     private var theme: TerminusTheme { appState.theme }
 
     var body: some View {
-        HStack(spacing: TerminusDesign.spacingMD) {
-            Button(action: { appState.splitFocused(direction: .horizontal) }) {
-                Image(systemName: "rectangle.split.1x2")
-                    .font(.system(size: 13))
+        HStack(spacing: 0) {
+            // Left group: panel management
+            HStack(spacing: TerminusDesign.spacingSM) {
+                toolbarButton("rectangle.split.1x2", active: false, tooltip: "Split Horizontally (Cmd+D)") {
+                    appState.splitFocused(direction: .horizontal)
+                }
+                toolbarButton("rectangle.split.2x1", active: false, tooltip: "Split Vertically (Cmd+Shift+D)") {
+                    appState.splitFocused(direction: .vertical)
+                }
+
+                Divider().frame(height: 14)
+
+                toolbarButton("xmark.square", active: false, tooltip: "Close Panel (Cmd+W)") {
+                    appState.closeFocusedPanel()
+                }
+
+                let count = appState.activeWorkspace.panelCount
+                if count > 1 {
+                    Text("\(count) panels")
+                        .font(.terminusUI(size: 10))
+                        .foregroundStyle(theme.chromeTextTertiary)
+                }
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(theme.chromeTextSecondary)
-            .help("Split Horizontally (Cmd+D)")
+            .fixedSize()
 
-            Button(action: { appState.splitFocused(direction: .vertical) }) {
-                Image(systemName: "rectangle.split.2x1")
-                    .font(.system(size: 13))
+            Spacer(minLength: TerminusDesign.spacingSM)
+
+            // Right group: toggle panels — fixedSize so they never compress
+            HStack(spacing: TerminusDesign.spacingSM) {
+                // AI
+                Button {
+                    withAnimation(TerminusDesign.springSnappy) {
+                        appState.showNLBar.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 12))
+                        if appState.isAIAvailable {
+                            Circle()
+                                .fill(TerminusAccent.success)
+                                .frame(width: 4, height: 4)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(appState.showNLBar ? TerminusAccent.primary : theme.chromeTextSecondary)
+                .help("AI Command Bar (Cmd+L)")
+
+                toolbarButton("command", active: false, tooltip: "Command Palette (Cmd+Shift+P)") {
+                    appState.showCommandPalette.toggle()
+                }
+
+                toolbarButton("magnifyingglass", active: false, tooltip: "Search (Cmd+Shift+F)") {
+                    appState.showSemanticSearch.toggle()
+                }
+
+                Divider().frame(height: 14)
+
+                // Panel toggles
+                toolbarButton("clock.arrow.circlepath", active: appState.showHistoryPanel, tooltip: "History (Cmd+Y)") {
+                    appState.loadHistory()
+                    appState.showHistoryPanel.toggle()
+                }
+
+                toolbarButton("folder", active: appState.showFileExplorer, tooltip: "File Explorer (Cmd+Shift+E)") {
+                    appState.showFileExplorer.toggle()
+                }
+
+                toolbarButton("chart.bar", active: appState.showMetrics, tooltip: "System Monitor (Cmd+Shift+M)") {
+                    appState.showMetrics.toggle()
+                }
+
+                toolbarButton("sidebar.right", active: appState.showSidebar, tooltip: "Saved Commands (Cmd+B)") {
+                    appState.showSidebar.toggle()
+                }
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(theme.chromeTextSecondary)
-            .help("Split Vertically (Cmd+Shift+D)")
-
-            Divider()
-                .frame(height: 16)
-
-            Button(action: { appState.closeFocusedPanel() }) {
-                Image(systemName: "xmark.square")
-                    .font(.system(size: 13))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(theme.chromeTextSecondary)
-            .help("Close Panel (Cmd+W)")
-
-            Spacer()
-
-            let count = appState.activeWorkspace.panelCount
-            if count > 1 {
-                Text("\(count) panels")
-                    .font(.terminusUI(size: 11))
-                    .foregroundStyle(theme.chromeTextTertiary)
-            }
-
-            Spacer()
-
-            Button(action: { appState.showCommandPalette.toggle() }) {
-                Image(systemName: "command")
-                    .font(.system(size: 13))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(theme.chromeTextSecondary)
-            .help("Command Palette (Cmd+Shift+P)")
-
-            Button(action: { appState.showSemanticSearch.toggle() }) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 13))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(theme.chromeTextSecondary)
-            .help("Search (Cmd+Shift+F)")
-
-            Button(action: { appState.showMetrics.toggle() }) {
-                Image(systemName: appState.showMetrics ? "gauge.with.dots.needle.33percent.badge.plus" : "gauge.with.dots.needle.33percent")
-                    .font(.system(size: 13))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(
-                appState.showMetrics ? TerminusAccent.primary : theme.chromeTextSecondary
-            )
-            .help("System Monitor (Cmd+Shift+M)")
-
-            Button(action: { appState.showSidebar.toggle() }) {
-                Image(systemName: appState.showSidebar ? "sidebar.right.fill" : "sidebar.right")
-                    .font(.system(size: 13))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(
-                appState.showSidebar ? TerminusAccent.primary : theme.chromeTextSecondary
-            )
-            .help("Saved Commands (Cmd+B)")
+            .fixedSize()
         }
         .padding(.horizontal, TerminusDesign.spacingMD)
+    }
+
+    private func toolbarButton(_ icon: String, active: Bool, tooltip: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: active ? icon + ".fill" : icon)
+                .font(.system(size: 12))
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(active ? TerminusAccent.primary : theme.chromeTextSecondary)
+        .help(tooltip)
     }
 }

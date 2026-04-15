@@ -186,6 +186,28 @@ public struct TerminalPanelView: View {
                 renderGeneration: controller.renderGeneration
             )
 
+            // Focused panel indicator
+            if isFocused {
+                VStack {
+                    HStack {
+                        Spacer()
+                    }
+                    Spacer()
+                }
+                .overlay(alignment: .top) {
+                    Rectangle()
+                        .fill(
+                            LinearGradient(
+                                colors: [TerminusAccent.primary.opacity(0.3), .clear],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(height: 1)
+                }
+                .allowsHitTesting(false)
+            }
+
             // Status bar overlay
             TerminalStatusBar(controller: controller, theme: theme)
         }

@@ -94,7 +94,7 @@ public actor AIServiceClient {
         (try? secureStorage.exists(key: SecureStorage.openRouterAPIKey)) ?? false
     }
 
-    private func getAPIKey() throws -> String {
+    func getAPIKey() throws -> String {
         guard let key = try secureStorage.retrieve(key: SecureStorage.openRouterAPIKey) else {
             throw AIServiceError.noAPIKey
         }
@@ -199,9 +199,18 @@ public actor AIServiceClient {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = json["choices"] as? [[String: Any]],
               let first = choices.first,
-              let message = first["message"] as? [String: Any],
-              let content = message["content"] as? String else {
+              let message = first["message"] as? [String: Any] else {
             throw AIServiceError.decodingError("Invalid chat response format")
+        }
+
+        // Handle content — may be null if model sent a refusal
+        let content: String
+        if let c = message["content"] as? String {
+            content = c
+        } else if let refusal = message["refusal"] as? String {
+            content = "Request refused: \(refusal)"
+        } else {
+            throw AIServiceError.decodingError("No content in chat response")
         }
 
         let model = json["model"] as? String ?? "unknown"

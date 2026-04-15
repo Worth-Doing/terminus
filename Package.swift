@@ -78,6 +78,7 @@ let package = Package(
                 "TerminalCore",
                 "SharedUI",
                 "SharedModels",
+                "AIService",
             ],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
@@ -141,7 +142,7 @@ let package = Package(
         ),
         .target(
             name: "SettingsUI",
-            dependencies: ["SharedUI", "SecureStorage", "SharedModels"],
+            dependencies: ["SharedUI", "SecureStorage", "SharedModels", "AIService"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
 
